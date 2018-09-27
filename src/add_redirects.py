@@ -35,13 +35,13 @@ def extract_redirect(elem: ElementTree.Element) -> str:
     if title is None:
         logger.debug('<page> has no <title> element')
         return
-    _from = title.text.lower().replace(' ', '_')
+    _from = title.text.replace(' ', '_').capitalize()
     # Check if page is a redirect
     redirect = elem.find(f'{xmlns}redirect')
     if redirect is None:
         logger.debug('<page> has no <redirect> element')
         return
-    _to = redirect.attrib['title'].lower().replace(' ', '_')
+    _to = redirect.attrib['title'].replace(' ', '_').capitalize()
     logger.debug('Redirect from "%s" to "%s"', _from, _to)
     return _from, _to
 

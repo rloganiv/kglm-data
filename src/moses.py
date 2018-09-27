@@ -3,7 +3,7 @@
 # This file is part of moses.  Its use is licensed under the GNU Lesser General
 # Public License version 2.1 or, at your option, any later version.
 
-# 
+#
 
 """
 Note: This Python (de-)tokenizer requires the following dependencies:
@@ -47,7 +47,7 @@ class MosesTokenizer(TokenizerI):
     >>> m = MosesTokenizer()
     >>> m.tokenize('2016, pp.')
     [u'2016', u',', u'pp', u'.']
-    
+
     >>> sent = "This ain't funny. It's actually hillarious, yet double Ls. | [] < > [ ] & You're gonna shake it off? Don't?"
     >>> m.tokenize(sent, escape=True)
     ['This', 'ain', '&apos;t', 'funny', '.', 'It', '&apos;s', 'actually', 'hillarious', ',', 'yet', 'double', 'Ls', '.', '&#124;', '&#91;', '&#93;', '&lt;', '&gt;', '&#91;', '&#93;', '&amp;', 'You', '&apos;re', 'gonna', 'shake', 'it', 'off', '?', 'Don', '&apos;t', '?']
@@ -421,7 +421,7 @@ class MosesDetokenizer(TokenizerI):
     >>> detokens = d.detokenize(tokens)
     >>> " ".join(detokens) == expected_detokens
     True
-    
+
     >>> d.detokenize(expected_tokens, unescape=True)
     ['This', "ain't", 'funny.', "It's", 'actually', 'hillarious,', 'yet', 'double', 'Ls.', '|', '[]', '<', '>', '[]', '&', "You're", 'gonna', 'shake', 'it', 'off?', "Don't?"]
     >>> d.detokenize(expected_tokens, unescape=False)
@@ -625,3 +625,4 @@ class MosesDetokenizer(TokenizerI):
     def detokenize(self, tokens, return_str=False, unescape=True):
         """ Duck-typing the abstract *tokenize()*."""
         return self.tokenize(tokens, return_str, unescape)
+

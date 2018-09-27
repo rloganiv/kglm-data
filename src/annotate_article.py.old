@@ -1,0 +1,502 @@
+#! /usr/bin/env python3.6
+"""
+Add annotations needed for the REALM model to a Wikipedia article.
+"""
+
+import argparse
+import bz2
+import csv
+from collections import defaultdict, deque, namedtuple
+from enum import Enum
+import logging
+import re
+import sys
+from typing import Iterable, List, Tuple
+from xml.etree import ElementTree
+
+from mwparserfromhell import parse
+from mwparserfromhell.nodes import Tag, Template, Text, Wikilink
+import spacy
+from sqlitedict import SqliteDict
+from titlecase import titlecase
+
+from .moses import MosesTokenizer
+from .render import process_literal
+
+
+logger = logging.getLogger(__name__)
+
+
+# nlp = spacy.load('en_coref_lg')
+# spacy.tokens.Token.set_extension('wikidata_id', default=None)
+tokenizer = MosesTokenizer()
+
+
+EntityToken = namedtuple('EntityToken', ['text', 'id'])
+
+
+class EnhancedToken(object):
+    """A token storing all of the neccessary data to train REALM.
+
+    Args:
+        text : ``str``
+            The text displayed when token is rendered.
+        z : ``bool``
+            Whether or not the current token is generated from the KG.
+        id : ``str``
+            If an entity is selected, then the entity's id. Otherwise, the
+            canonical representation of the fact literal.
+        parent_id : ``str``
+            The entity id of the parent of the current token.
+        relation : ``str``
+            The selected relation used to pick the entity/fact to render.
+    """
+    def __init__(self,
+                 text: str,
+                 z: bool = False,
+                 id: str = None,
+                 relation: str = None,
+                 parent_id: str = None) -> None:
+        self.text = text
+        self.z = z
+        self.id = id
+        self.relation = relation
+        self.parent_id = parent_id
+
+    def __repr__(self):
+        args = (self.text, self.z, self.id, self.relation, self.parent_id)
+        return 'EnhancedToken(text="%s", z=%s, id="%s", relation="%s", '\
+               'parent_id="%s")' % args
+
+    def __eq__(self, x):
+        if (self.text == x.text) and \
+           (self.z == x.z) and \
+           (self.id == x.id) and \
+           (self.relation == x.relation) and \
+           (self.parent_id == x.parent_id):
+            return True
+        return False
+
+
+def link_by_coref(tokens):
+    # Create a doc using predefined tokens (e.g. do not run SpaCy's tokenizer)
+    text = [token.text for token in tokens]
+    ids = [token.id for token in tokens]
+    doc = spacy.tokens.Doc(nlp.vocab, words=text)
+    # Annotate tokens
+    for token, id in zip(doc, ids):
+        token._.wikidata_id = id
+    # Apply rest of nlp pipeline to get coreference annotations
+    for _, proc in nlp.pipeline:
+        doc = proc(doc)
+    # For each coreference cluster check if there is a unique wikidata id. If
+    # there is assign it to each token in the cluster.
+    if doc._.coref_clusters is None:  # All that work for nothing!
+        return tokens
+    for cluster in doc._.coref_clusters:
+        id_set = set()
+        for span in cluster:
+            for token in span:
+                if token._.wikidata_id is not None:
+                    id_set.add(token._.wikidata_id)
+        if len(id_set) == 1:
+            id = id_set.pop()
+            for span in cluster:
+                for token in span:
+                    token._.wikidata_id = id
+    # Return the processed list of tokens
+    out = [EntityToken(token.text, token._.wikidata_id) for token in doc]
+    return out
+
+
+
+
+class ExactMatchTree(object):
+    """Basic prefix tree implementation."""
+    def __init__(self) -> None:
+        self._root = TreeNode()
+        self._active = self._root
+
+    def __call__(self, x: str) -> Tuple[Enum, str]:
+        """Looks up an item"""
+        try:
+            next = self._active[x]
+        except KeyError:
+            self._active = self._root
+            return False, None
+        else:
+            self._active = next
+            if self._terminal in self._active:
+                id = self._active[self._terminal]
+            else:
+                id = None
+        return True, id
+
+    def __contains__(self, iter: Iterable[str]):
+        active = self._root
+        for elt in iter:
+            try:
+                active = parent[elt]
+            except KeyError:
+                return False
+        if active.is_terminal:
+            return True
+        else:
+            return False
+
+    def add(self, iter, id) -> None:
+        """Adds a prefix and its identifier to the tree."""
+        active = self._root
+        for elt in iter:
+            if elt not in active:
+                active[elt] = TreeNode()
+            active = active[elt]
+        active.id = id
+
+
+class RealmLinker(object):
+    """Links sequences of tokens in Wikipedia articles to Wikidata
+    entities/literals.
+
+    Args:
+        alias_db : ``sqlitedict.SqliteDict``
+            Key-value store mapping an entity's id to a list of aliases for the
+            entity.
+        relation_db : ``sqlitedict.SqliteDict``
+            Key-value store mapping an entity's id to a list of related
+            entities.
+        wiki_db : ``sqlitedict.SqliteDict``
+            Key-value store mapping wikipedia titles to entity ids.
+        distance_cutoff : ``int``
+            Maximum distance (in words) allowed between parent and child entities.
+    """
+    def __init__(self,
+                 alias_db: SqliteDict,
+                 relation_db: SqliteDict,
+                 wiki_db: SqliteDict,
+                 distance_cutoff: int = 30):
+        self.alias_db = alias_db
+        self.wiki_db = wiki_db
+        self.relation_db = relation_db
+        self.distance_cutoff = distance_cutoff
+        self.seen = None  # Which entities have been observed
+        self.parents = None  # Link 1st step entities back to parents
+        self.reverse_aliases = None  # Alias -> EntityId lookup
+        self.prior = None  # Entities that were not in KG when linked (no parents)
+
+    def instantiate(self, title: str) -> None:
+        """Instantiates the ``RealmLinker``. This function should be called
+        before linking a new document.
+
+        Args:
+            title : ``str``
+                Title of the wikipedia page being linked.
+        """
+        # Clear information
+        self.seen = dict()
+        self.parents = dict()
+        self.reverse_aliases = ExactMatchTree()
+        self.prior = []
+
+        # Instantiate with top-level entity + relations
+        entity_id = self.wiki_db[title]
+        self.expand(entity_id, 0)
+
+    def expand(self, id, loc):
+        """Adds first order relations out from entity ``id`` to the graph."""
+        # Expand only when entity is first encountered
+        logger.debug('Expanding id: "%s"', id)
+        if id not in self.seen:
+            logger.debug('"%s" not in seen', id)
+            try:
+                aliases = self.alias_db[id]
+            except KeyError:  # Object is probably a literal and cannot be expanded
+                return
+            for alias in aliases:
+                alias_tokens = tokenizer.tokenize(alias)
+                self.reverse_aliases.add(alias_tokens, id)
+            # Expand relations
+            relations = self.relation_db[id]
+            for prop, value in relations:
+                # If value is an entity then look up in db
+                if value['type'] == 'wikibase-entityid':
+                    child_id = value['value']['id']
+                    try:
+                        child_aliases = self.alias_db[child_id]
+                    except:  # A child has no name?
+                        logging.warning('Encountered nameless child "%s" in '
+                                        'relation table for "%s"', child_id, id)
+                # Otherwise value is probably a literal that must be processed
+                else:
+                    child_id, child_aliases = process_literal(value)
+                # Skip if no identifier was extracted (e.g. if literal is a URL)
+                if child_id is None:
+                    continue
+                # Update parents
+                self.parents[child_id] = (prop, id)
+                # Add all of the aliases to the reverse lookup
+                for child_alias in child_aliases:
+                    child_alias_tokens = tokenizer.tokenize(child_alias)
+                    if child_alias_tokens not in self.reverse_aliases:
+                        self.reverse_aliases.add(child_alias_tokens, child_id)
+        # Regardless of whether graph is expanded, always update location
+        self.seen[id] = loc
+
+    def link(self, tokens: List[Tuple[str]]) -> List[EnhancedToken]:
+        """Attempts to link a sequence of tokens.
+
+        Args:
+            tokens : List[Tuple[str]]
+                Sequence of tokens to be linked.
+
+        Returns:
+            A list of linked ``EnhancedToken``s.
+        """
+        out = []
+        token_stack = deque(reversed(tokens))
+        while len(token_stack) > 0:
+            logger.debug('Token stack length: %i', len(token_stack))
+            active = token_stack.pop()
+            if active.id is not None:  # Found already linked token
+                logger.debug('Found already linked token')
+                tmp_stack = deque()
+                tmp_stack.append(active)
+                while True:
+                    try:
+                        tmp = token_stack.pop()
+                    except IndexError:
+                        break
+                    if tmp.id != active.id:
+                        token_stack.append(tmp)
+                        break
+                    else:
+                        tmp_stack.append(tmp)
+                id = active.id
+            else:  # Need to try and match to an alias
+                matching, id = self.reverse_aliases(active.text)
+                if not matching:  # Encountered plain text
+                    logger.debug('Found plain text token')
+                    out.append(EnhancedToken(active.text))
+                    continue
+                else:
+                    logger.debug('Found potential exact match')
+                    tmp_stack = deque()
+                while matching:
+                    logger.debug('Matching')
+                    tmp = EntityToken(active.text, id)
+                    tmp_stack.append(tmp)
+                    try:
+                        active = token_stack.pop()
+                    except IndexError:
+                        active = None
+                        break
+                    matching, id = self.reverse_aliases(active.text)
+                if active:  # Last token didn't match, so pop it back on
+                    token_stack.append(active)
+            # Keep popping tokens off `tmp_stack` until a linked token
+            # occurs. All remaining tokens on the stack must be part of the
+            # mention.
+            active = tmp_stack.pop()
+            while active.id is None:
+                logger.debug('Looking for id')
+                token_stack.append(active)
+                try:
+                    active = tmp_stack.pop()
+                # An IndexError is only raised if the stack has no linked
+                # tokens (e.g. consists of just partial links). In this case
+                # the bottom token is just plain text.
+                except IndexError:
+                    logger.debug('No id found')
+                    token_stack.pop()
+                    out.append(EnhancedToken(active.text))
+                    active = None
+                    break
+            if active:
+                logger.debug('Id found')
+                id = active.id
+                z = True
+                current_loc = len(out)
+                # If entity has been seen before or has no parents then it
+                # generates itself.
+                if id in self.seen or id not in self.parents:
+                    relation = ('@@REFLEXIVE@@', None)
+                    parent_id = id
+                    self.expand(id, current_loc)
+                # Otherwise it is generated by its parents, provided they
+                # are in the proximity.
+                else:
+                    relation, parent_id = self.parents[id]
+                    parent_loc = self.seen[parent_id]
+                    if (current_loc - parent_loc) >= self.distance_cutoff:
+                        z = False
+                        id = None
+                        relation = None
+                        parent_id = None
+                    else:
+                        self.expand(id, current_loc)
+                tmp_stack.append(active) # Add last token back to stack
+                # Process stack - first token gets id info, rest are
+                # `continue` tokens.
+                tmp = tmp_stack.popleft()
+                token = EnhancedToken(tmp.text, z, id, relation, parent_id)
+                out.append(token)
+                while len(tmp_stack) > 0:
+                    tmp = tmp_stack.popleft()
+                    token = EnhancedToken(tmp.text, z)
+                    out.append(token)
+        return out
+
+
+def process_tag(node: Tag):
+    while isinstance(node, Tag):
+        if str(node.closing_tag) in ['b', 'i']:
+            node = node.contents
+        elif str(node.closing_tag) == 'math':
+            return [Text('@MATH@')]
+        else:
+            return None
+    return node.filter(recursive=False)
+
+
+def render_wikilink(node: Wikilink):
+    if re_image.match(str(node.title)):
+        return
+    if node.text is not None:
+        return str(node.text)
+    else:
+        return str(node.title)
+
+
+def link_entity(node: Wikilink,
+                wiki_db: SqliteDict) -> str:
+    """Links a ``Wikilink`` node to a Wikidata entity.
+
+    Args:
+        node : ``mwparserfromhell.node.Wikilink``
+            The wikilink to link.
+        wikidb : ``sqlitedict.SqliteDict``
+            Maps enwiki page titles to entities.
+
+    Returns:
+        A ``str`` containing the corresponding entity id if found, otherwise
+        None.
+    """
+    key = str(node.title)
+    key = key.lower().replace(' ', '_')
+    logger.debug('Looking up "%s" in wikidb', key)
+    try:
+        entity_id = wiki_db[key]
+        logger.debug('Found entity id "%s"', entity_id)
+    except KeyError:
+        entity_id = None
+        logger.debug('Could not find "%s" in wikidb', key)
+    return entity_id
+
+
+def process_wikitext(wikitext, wiki_db, title):
+    """Processes wikitext.
+
+    This entails parsing the text, linking Wikilinks to corresponding Wikidata
+    entities, tokenizing the text, ...
+
+    Args:
+        text : ``str``
+            The string containing the wikitext.
+
+    Returns:
+        TODO: FIGURE THIS OUT
+    """
+    wikicode = parse(wikitext)
+
+    # TODO: Hop and grab aliases of associated entities
+    tokens = []
+    nodes = deque(wikicode.filter(recursive=False))
+    while len(nodes) > 0:
+        node = nodes.popleft()
+        entity_id = None
+        text = None
+        # A tag may or may not contain valid tokens, if it does insert the
+        # inner nodes to the front of the queue.
+        if isinstance(node, Tag):
+            processed_tag = process_tag(node)
+            if processed_tag is not None:
+                nodes.extendleft(reversed(processed_tag))
+        # Text can simply be rendered as a string
+        elif isinstance(node, Text):
+            text = str(node)
+        # Wikilinks should be rendered as a string as well as possibly linked
+        # to an entity in the knowledge base.
+        elif isinstance(node, Wikilink):
+            text = render_wikilink(node)
+            entity_id = link_entity(node, wiki_db)
+        elif isinstance(node, Template):
+            if str(node.name) == 'math':
+                tokens.append(('@MATH@', None))
+            if str(node.name) not in irrelevant_templates:
+                try:
+                    if tokens[-1][0] != '@UNK-TEMPLATE@':
+                        tokens.append(EntityToken('@UNK-TEMPLATE@', None))
+                except IndexError:
+                    pass
+        if text is None:
+            continue
+        # TODO: Check if text is a literal, and token[1] the canonical
+        # representation (e.g. date -> POSIX format).
+        tokens.extend(EntityToken(x, entity_id) for x in tokenizer.tokenize(text))
+    # Remove trailing @UNK-TEMPLATE@ token if it exists
+    try:
+        if tokens[0][0] == '@UNK-TEMPLATE@':
+            tokens = tokens[1:]
+    except IndexError:
+        pass
+    try:
+        if tokens[-1][0] == '@UNK-TEMPLATE@':
+            tokens = tokens[:-1]
+    except IndexError:
+        pass
+    return tokens
+
+
+def main(_):
+    alias_db = SqliteDict(FLAGS.alias_db)
+    relation_db = SqliteDict(FLAGS.relation_db)
+    wiki_db = SqliteDict(FLAGS.wiki_db)
+    linker = RealmLinker(alias_db, relation_db, wiki_db)
+    fieldnames = ['page', 'line', 'text', 'z', 'id', 'relation', 'parent_id']
+    writer = csv.DictWriter(sys.stdout, delimiter='\t', fieldnames=fieldnames)
+    with open(FLAGS.input, 'r') as f:
+        text = f.read()
+        title, wikitext = processed
+        title = title.lower().replace(' ', '_')
+        linker.instantiate(title)
+        wikitext = clean_wikitext(wikitext)
+        tokens = process_wikitext(wikitext, wiki_db, title)
+        try:
+            tokens = link_by_coref(tokens)
+        except AttributeError:  # WHY DOES THIS HAPPEN ?!
+            continue
+        tokens = linker.link(tokens)
+        # Serialization
+        for i, token in enumerate(tokens):
+            d = {'page': page_count, 'line': i, **token.__dict__}
+            writer.writerow(d)
+        elem.clear()
+        root.clear()
+        page_count += 1
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('input', type=str)
+    parser.add_argument('--alias_db', type=str, default='data/alias.db')
+    parser.add_argument('--relation_db', type=str, default='data/relation.db')
+    parser.add_argument('--wiki_db', type=str, default='data/wiki.db')
+    parser.add_argument('--debug', action='store_true')
+    FLAGS, _ = parser.parse_known_args()
+    if FLAGS.debug:
+        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+    else:
+        logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+
+    main(_)
+

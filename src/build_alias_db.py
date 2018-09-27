@@ -65,6 +65,8 @@ def main(_):
                     except KeyError:
                         pass
             logger.debug('id: "%s" - aliases: %s', id, aliases)
+            if len[aliases] == '0':
+                continue
             db[id] = aliases
         db.commit()
     logger.info('Done')

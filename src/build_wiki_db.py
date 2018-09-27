@@ -14,10 +14,6 @@ from sqlitedict import SqliteDict
 logger = logging.getLogger(__name__)
 
 
-def normalize_title(title):
-    return title.lower().replace(' ', '_')
-
-
 def main(_):
     logger.info('Opening database file at: "%s"', FLAGS.db)
     with SqliteDict(FLAGS.db, autocommit=True) as db:
@@ -39,10 +35,15 @@ def main(_):
             id = data['id']
             try:
                 wiki = data['sitelinks']['enwiki']['title']
+                wiki = wiki.replace(' ', '_')
+                try:
+                    wiki = wiki[0].capitalize() + wiki[1:]
+                except IndexError:
+                    logger.warning('IndexError occured for title "%s"', wiki)
+                    wiki = wiki.capitalize()
             except:
-                logger.warning('No enwiki title found for entity "%s"', id)
+                logger.debug('No enwiki title found for entity "%s"', id)
                 continue
-            wiki = wiki.lower().replace(' ', '_')
             logger.debug('id: "%s" - enwiki title: "%s"', id, wiki)
             if wiki in db:
                 logger.warning('Collision for enwiki title: "%s", ' \
