@@ -7,10 +7,11 @@ import bz2
 from collections import UserDict
 import json
 import logging
+from multiprocessing import Process, Lock, Queue
 import os
 import re
 import sys
-from typing import Tuple
+from typing import Set, Tuple
 from xml.etree import ElementTree
 
 import mwparserfromhell as wiki
@@ -25,6 +26,16 @@ logger = logging.getLogger(__name__)
 BAD_NODES = ['ref', 'table']
 BAD_SECTIONS = ['see also', 'further reading', 'references', 'external links']
 RE_WHITESPACE = re.compile(r'[\n\r\s]+')
+
+
+def _format_wikilink(wikilink: str) -> str:
+    """Formats a wikilink"""
+    wikilink = wikilink.replace(' ', '_')
+    if len(wikilink) == 1:
+        return wikilink.capitalize()
+    elif len(wikilink) > 1:
+        return wikilink[0].capitalize() + wikilink[1:]
+    return wikilink
 
 
 def page_generator(path: str) -> Tuple[str]:
@@ -137,12 +148,12 @@ def clean_wikitext(wikitext: str,
     return stripped
 
 
-def process(title: str,
-            wikitext: str,
-            nlp: Language,
-            wiki_db: SqliteDict,
-            batch_size: int = 128,
-            n_threads: int = 1) -> str:
+def preprocess(title: str,
+               wikitext: str,
+               nlp: Language,
+               wiki_db: SqliteDict,
+               batch_size: int = 128,
+               n_threads: int = 1) -> str:
     """Tokenizes text, maps wikilinks to wikidata entities, and constructs
     output dictionary.
 
@@ -198,14 +209,7 @@ def process(title: str,
         id = None
         if isinstance(node, wiki.nodes.Wikilink):
             node_title = str(node.title)
-            key = node_title.replace(' ', '_')
-            try:
-                key = key[0].capitalize() + key[1:]
-            except IndexError:
-                if len(key) == 1:
-                    key = key[0].capitalize()
-                else:
-                    key = None
+            key = _format_wikilink(node_title)
             if key in wiki_db:
                 id = wiki_db[key]
             if node.text is not None:
@@ -246,23 +250,78 @@ def process(title: str,
     return out
 
 
-def main(_):
-    logger.info('Loading SpaCy model')
-    nlp = spacy.load('en_core_web_sm', disable=['ner'])
+def load_filter_list(fname: str) -> Set:
+    if fname is not None:
+        logger.info('Loading filter list from "%s"', fname)
+        filter_list = set()
+        with open(fname, 'r') as f:
+            for line in f:
+                filter_list.add(line.strip())
+    else:
+        logger.info('No filter list specified.')
+        filter_list = None
+    return filter_list
 
+
+def worker(i, task_queue):
+    logger.info('Loading SpaCy model in process %i', i)
+    nlp = spacy.load('en_core_web_sm', disable=['ner'])
+    logger.info('Loading wiki database in process %i', i)
+    wiki_db = SqliteDict(FLAGS.wiki_db, flag='r')
+    logger.info('Starting to annotate data in process %i', i)
+    with open('%s.%i' % (FLAGS.prefix, i), 'w') as f:
+        while True:
+            try:
+                title, wikitext = task_queue.get()
+            except Queue.Empty:
+                logger.info('Queue empty, stopping process %i', i)
+                break
+            logger.debug('Annotating "%s" in process %i', title, i)
+            wikitext = clean_wikitext(wikitext)
+            instance = preprocess(title, wikitext, nlp, wiki_db, n_threads=8)
+            if instance is not None:
+                f.write(json.dumps(instance))
+                f.write('\n')
+
+
+def main(_):
     logger.info('Loading wiki database from "%s"', FLAGS.wiki_db)
     wiki_db = SqliteDict(FLAGS.wiki_db, flag='r')
-    assert wiki_db.flag == 'r', '`wiki_db` must be opened as read-only'
+
+    filter_list = load_filter_list(FLAGS.filter_list)
+
+    task_queue = Queue()
+
+    logger.info('Launching %i processes', FLAGS.j)
+    processes = [Process(target=worker, args=(i, task_queue)) for i in range(FLAGS.j)]
+    for process in processes:
+        process.start()
 
     for i, (title, wikitext) in enumerate(page_generator(FLAGS.input)):
-        if not i % 10000:
-            logger.info('On article %i', i)
-        logger.debug('Processing article "%s"', title)
-        title = title.lower().replace(' ', '_')
-        wikitext = clean_wikitext(wikitext)
-        instance = process(title, wikitext, nlp, wiki_db, n_threads=FLAGS.n_threads)
-        if instance is not None:
-            print(json.dumps(instance))
+
+        # Check article corresponds to wikidata entity (it should)
+        title = _format_wikilink(title)
+        if title not in wiki_db:
+            logger.debug('Title "%s" not in wiki_db, skipping', title)
+            continue
+        else:
+            key = wiki_db[title]
+
+        # Check that entity is in ``filter_list`` (if ``filter_list`` is given).
+        if filter_list is not None:
+            if key not in filter_list:
+                logger.debug('Key "%s" not in filter_list, skipping', key)
+                continue
+            else:
+                logger.debug('Key "%s" in filter_list', key)
+
+        # Enqueue data
+        task_queue.put((title, wikitext))
+
+
+    for process in processes:
+        process.join()
+
     wiki_db.close()
 
     logger.info('Finished')
@@ -271,13 +330,17 @@ def main(_):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input', type=str, help='Path to Wikipedia dump')
+    parser.add_argument('--prefix', type=str, help='Output prefix',
+                        default='data/dump.jsonl')
     parser.add_argument('--wiki_db', type=str, default='data/wiki.db',
                         help='Path to database mapping article titles to '
                              'wikidata ids')
+    parser.add_argument('--filter_list', type=str, default=None,
+                        help='List of allowed entity ids.')
     parser.add_argument('--debug', action='store_true',
                         help='Print debug statements')
-    parser.add_argument('--n_threads', type=int, default=8,
-                        help='Number of threads to use')
+    parser.add_argument('-j', type=int, default=8,
+                        help='Number of processing threads')
     FLAGS, _ = parser.parse_known_args()
 
     if FLAGS.debug:
