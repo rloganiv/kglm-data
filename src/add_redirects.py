@@ -1,5 +1,6 @@
 """
-Adds redirects from wikipedia to wikidb
+Adds redirects from wikipedia to wikidb (the database mapping titles to
+wikidata entities).
 """
 import argparse
 import bz2

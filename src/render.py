@@ -1,3 +1,6 @@
+"""
+Functions for rendering date and quantity literals.
+"""
 from collections import namedtuple
 import re
 

@@ -1,3 +1,6 @@
+"""
+Custom predictor for AllenNLPs coref model which allows windowing.
+"""
 import logging
 
 from allennlp.common.util import JsonDict

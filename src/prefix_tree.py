@@ -1,3 +1,8 @@
+"""
+Implementation of a prefix-tree data structure.
+
+Used to match token sequences in linear time.
+"""
 import logging
 from typing import Tuple, Iterable
 

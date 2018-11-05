@@ -21,6 +21,8 @@ from src.render import process_literal
 logger = logging.getLogger(__name__) # pylint: disable=invalid-name
 
 
+PRONOUNS = set(['PRP', 'PRP$', 'WP', 'WP$'])
+
 # Custom SpaCy extensions
 Doc.set_extension('clusters', default=[])
 Token.set_extension('source', default=None)
@@ -71,6 +73,9 @@ class Annotator:
             Key-value store mapping wikipedia titles to entity ids.
         distance_cutoff : ``int``
             Maximum distance (in words) allowed between parent and child entities.
+        match_aliases : ``bool``
+        unmatch_shady_nel : ``bool``
+        prune_clusters : ``bool``
     """
     # pylint: disable=too-many-instance-attributes,too-few-public-methods,no-self-use
     def __init__(self,
@@ -79,13 +84,15 @@ class Annotator:
                  wiki_db: SqliteDict,
                  distance_cutoff: int,
                  match_aliases: bool,
-                 unmatch_shady_nel: bool) -> None:
+                 unmatch_shady_nel: bool,
+                 prune_clusters: bool) -> None:
         self._alias_db = alias_db
         self._relation_db = relation_db
         self._wiki_db = wiki_db
         self._distance_cutoff = distance_cutoff
         self._match_aliases = match_aliases
         self._unmatch_shady_nel = unmatch_shady_nel
+        self._prune_clusters = prune_clusters
         self._nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner'])
         self._last_seen = dict()  # Last location entity was seen in text
         self._parents = dict()  # Lookup parents that added node to graph
@@ -133,9 +140,12 @@ class Annotator:
                 if already_linked:
                     continue
                 key = _format_wikilink(candidate['label'])
+                try:
+                    id = self._wiki_db[key]
+                except KeyError:
+                    continue
                 is_not_shady = key in wiki_ids if self._unmatch_shady_nel else True
                 if key in self._wiki_db and is_not_shady:
-                    id = self._wiki_db[key]
                     for token in doc[start:end]:
                         token._.id = id
                         token._.source = 'NEL'
@@ -159,6 +169,7 @@ class Annotator:
             ``True`` if data was changed, otherwise ``False``.
         """
         for i, cluster in enumerate(doc._.clusters):
+            # Check that mentions in the cluster have a single entity id
             logger.debug('Detecting ids for cluster %i', i)
             id_set = set()
             for start, end in cluster:
@@ -166,15 +177,47 @@ class Annotator:
                 if len(cluster_ids) == 1:
                     id_set.add(cluster_ids.pop())
             logger.debug('Id set: %s', id_set)
-            if len(id_set) == 1:
-                id = id_set.pop()
-                logger.debug('Propagating id: %s', id)
+            if len(id_set) != 1:
+                continue
+            id = id_set.pop()
+
+            # (Optional) Prune mentions / tokens from clusters which do not
+            # correspond to a pronoun or entity alias.
+            if self._prune_clusters:
+                logger.debug('Pruning cluster')
+                logger.debug('Initial cluster size: %i', len(cluster))
+
+                # Create an exact match tree for aliases
+                alias_lookup = set()
+                aliases = self._alias_db[id]
+                for alias in aliases:
+                    alias_tokens = tuple(x.text for x in self._nlp.tokenizer(alias))
+                    alias_lookup.add(alias_tokens)
+
+                # Prune step
+                new_cluster = []
                 for start, end in cluster:
-                    for token in doc[start:end+1]:
-                        if token._.id != id:
-                            token._.id = id
-                            token._.source = 'COREF'
-                            logger.debug('token: %s - %s', token, token._)
+                    mention = doc[start:end+1]
+                    # Check for pronoun
+                    if start == end:
+                        if mention[0].tag_ in PRONOUNS:
+                            new_cluster.append((start, end))
+                            logger.debug('Found pronoun: %s', mention)
+                    # Check for alias match
+                    mention_tokens = (x.text for x in mention)
+                    if mention_tokens in alias_lookup:
+                        new_cluster.append((start, end))
+                        logger.debug('Exact alias match: %s', mention)
+                cluster = new_cluster
+
+            # Propagate the id
+            logger.debug('Propagating id: %s', id)
+            for start, end in cluster:
+                for token in doc[start:end+1]:
+                    if token._.id != id:
+                        token._.id = id
+                        token._.source = 'COREF'
+                        logger.debug('token: %s - %s', token, token._)
 
     def _expand(self, id: str, loc: int) -> None:
         """Expands the session's graph by bringing in related entities/facts.
@@ -359,11 +402,11 @@ class Annotator:
             loc = n - len(token_stack) + len(match_stack)
             if id in self._last_seen :
                 logger.debug('Id has been seen before')
-                relation = ('@@REFLEXIVE@@', None)
+                relation = '@@REFLEXIVE@@'
                 parent_id = id
             elif id not in self._parents:
                 logger.debug('Id is not in expanded graph')
-                relation = ('@@NEW@@', None)
+                relation = '@@NEW@@'
                 parent_id = id
             else:
                 logger.debug('Id has been seen before')
@@ -377,7 +420,7 @@ class Annotator:
                     if id not in self._alias_db:
                         continue
                     else:
-                        relation = ('@@CUTOFF@@', None)
+                        relation = '@@CUTOFF@@'
                         parent_id = id
 
             # If we've survived to this point then there is a valid match for
@@ -489,7 +532,8 @@ def worker(q: JoinableQueue, i: int, output, print_lock: Lock, FLAGS: Tuple[Any]
                           wiki_db,
                           distance_cutoff=FLAGS.cutoff,
                           match_aliases=FLAGS.match_aliases,
-                          unmatch_shady_nel=FLAGS.unmatch_shady_nel)
+                          unmatch_shady_nel=FLAGS.unmatch_shady_nel,
+                          prune_clusters=FLAGS.prune_clusters)
     while True:
         logger.info('Worker %i taking a task from the queue', i)
         json_data = q.get()
@@ -556,6 +600,9 @@ if __name__ == '__main__':
     parser.add_argument('--unmatch_shady_nel', '-i', action='store_true',
                         help='Whether or not to ignore ids from NEL which do '
                              'not match ids from wikipedia')
+    parser.add_argument('--prune_clusters', '-p', action='store_true',
+                        help='Whether or not to prune mentions from clusters '
+                             'that are not aliases or pronouns')
     parser.add_argument('--debug', action='store_true')
     FLAGS, _ = parser.parse_known_args()
 
