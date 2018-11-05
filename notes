@@ -1,0 +1,32 @@
+Notes on dataset construction
+===
+
+This dataset is created from dumps of wikipedia and wikidata from 05/20/2018:
+    - enwiki-20180520-pages-articles-multistream.xml.bz2
+    - latest-all.json.gz
+
+Wikidata entities are linked to wikipedia articles using the "enwiki" property,
+this mapping is stored in the `wiki.db` file. NOTE: In order to maximize the
+number of matches we ignore case when looking up titles. Wikipedia article
+titles are case-sensitive in general, so this causes a small number of
+collisions.
+
+Each entity can potentially have many aliases, the mapping from entity ids to
+aliases is stored in the `alias.db` file.
+
+Lastly, we store all relations in the `relation.db` file.
+
+To produce the `.db` files from scratch, the wikidata dump needs to be piped to
+one of the build scripts. E.g. to build the `alias.db` run:
+```{bash}
+zcat latest-all.json.gz | scripts/build_alias_db.py
+```
+see `scripts/build_alias_db.py --help` for additional options.
+
+The 'enwiki' property alone is not sufficient to map all links from a wikipedia
+article to wikidata entities. The reason for this is that sometimes a redirect
+link may be used instead of a proper wikipedia page title. These redirects can
+be added to the `wiki.db` by running:
+```{bash}
+scripts/add_redirects.py $WIKIPEDIA_DUMP_PATH wiki.db
+```
