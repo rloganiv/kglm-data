@@ -11,6 +11,18 @@ Format = namedtuple('Format', ['format_string', 'include_era',
                                'remove_leading_zeros'])
 
 
+YEAR_FORMATS = [
+    Format('%Y', True, True)
+]
+
+
+MONTH_FORMATS = [
+    Format('%B %Y', True, True),
+    Format('%B', False, False),
+    Format('%b %Y', True, True),
+    *YEAR_FORMATS
+]
+
 DAY_FORMATS = [
     Format('%d %B %Y', True, True),
     Format('%d %b %Y', True, True),
@@ -20,16 +32,8 @@ DAY_FORMATS = [
     Format('%d %b', False, True),
     Format('%B %d', False, True),
     Format('%b %d', False, True),
-    Format('%Y-%m-%d', False, False)
-]
-
-MONTH_FORMATS = [
-    Format('%B %Y', True, True),
-    Format('%b %Y', True, True)
-]
-
-YEAR_FORMATS = [
-    Format('%Y', True, True)
+    Format('%Y-%m-%d', False, False),
+    *MONTH_FORMATS
 ]
 
 RE_LEADING_ZEROS = re.compile(r'((?<=\s)0+|^0+)')
