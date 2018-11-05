@@ -3,10 +3,11 @@
 Adds entity annotations to JSON-lines files.
 """
 import argparse
-from collections import deque
+from collections import defaultdict, deque
 import json
 import logging
 from multiprocessing import JoinableQueue, Lock, Process
+import pickle
 import queue
 from typing import Any, Deque, Dict, List, Tuple
 
@@ -471,9 +472,21 @@ class Annotator:
 
 def worker(q: JoinableQueue, i: int, output, print_lock: Lock, FLAGS: Tuple[Any]) -> None:
     """Retrieves files from the queue and annotates them."""
-    annotator = Annotator(alias_db=SqliteDict(FLAGS.alias_db, flag='r'),
-                          relation_db=SqliteDict(FLAGS.relation_db, flag='r'),
-                          wiki_db=SqliteDict(FLAGS.wiki_db, flag='r'),
+    if FLAGS.in_memory:
+        with open(FLAGS.alias_db, 'rb') as f:
+            alias_db = pickle.load(f)
+        with open(FLAGS.relation_db, 'rb') as f:
+            relation_db = pickle.load(f)
+        with open(FLAGS.wiki_db, 'rb') as f:
+            wiki_db = pickle.load(f)
+    else:
+        alias_db=SqliteDict(FLAGS.alias_db, flag='r')
+        relation_db=SqliteDict(FLAGS.relation_db, flag='r')
+        wiki_db=SqliteDict(FLAGS.wiki_db, flag='r')
+
+    annotator = Annotator(alias_db,
+                          relation_db,
+                          wiki_db,
                           distance_cutoff=FLAGS.cutoff,
                           match_aliases=FLAGS.match_aliases,
                           unmatch_shady_nel=FLAGS.unmatch_shady_nel)
@@ -499,8 +512,13 @@ def loader(q: JoinableQueue, FLAGS: Tuple[Any]) -> None:
 
 
 def main(_): # pylint: disable=missing-docstring
+    if FLAGS.prune_clusters:
+        logger.warning('Cluster pruning is active. Beware the doc._.clusters is '
+                       'not updated to only hold pruned mentions - this may '
+                       'cause unexpected behavior if ``Annotator._propagate_ids()`` '
+                       'is called multiple times.')
     logger.info('Starting queue loader')
-    q = JoinableQueue()
+    q = JoinableQueue(maxsize=256)
     l = Process(target=loader, args=(q, FLAGS))
     l.start()
 
@@ -529,6 +547,7 @@ if __name__ == '__main__':
     parser.add_argument('--alias_db', type=str, default='data/alias.db')
     parser.add_argument('--relation_db', type=str, default='data/relation.db')
     parser.add_argument('--wiki_db', type=str, default='data/wiki.db')
+    parser.add_argument('--in_memory', action='store_true')
     parser.add_argument('--cutoff', '-c', type=float, default=float('inf'),
                         help='Maximum distance between related entities')
     parser.add_argument('--match_aliases', '-m', action='store_true',

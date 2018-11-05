@@ -1,11 +1,10 @@
-#! /usr/bin/env python3.6
 """
 Adds redirects from wikipedia to wikidb
 """
-
 import argparse
 import bz2
 import logging
+import pickle
 import sys
 from xml.etree import ElementTree
 from xml.sax.saxutils import unescape
@@ -48,7 +47,13 @@ def extract_redirect(elem: ElementTree.Element) -> str:
 
 def main(_):
     logger.info('Opening database file at: "%s"', FLAGS.wiki_db)
-    wiki_db = SqliteDict(FLAGS.wiki_db, autocommit=True)
+
+    if FLAGS.in_memory:
+        with open(FLAGS.wiki_db, 'rb') as f:
+            wiki_db = pickle.load(f)
+    else:
+        wiki_db = SqliteDict(FLAGS.wiki_db, autocommit=True)
+
     with bz2.open(FLAGS.input, 'r') as f:
         tree = ElementTree.iterparse(f, events=('start', 'end'))
         root = None
@@ -76,7 +81,14 @@ def main(_):
                     wiki_db[_from] = entity_id
                 elem.clear()
                 root.clear()
+
+    if FLAGS.in_memory:
+        logger.info('Dumping')
+        with open(FLAGS.wiki_db, 'wb') as f:
+            pickle.dump(wiki_db, f)
+    else:
         wiki_db.commit()
+
     logger.info('Done')
 
 
@@ -84,12 +96,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input', type=str)
     parser.add_argument('wiki_db', type=str)
+    parser.add_argument('--in_memory', action='store_true')
     parser.add_argument('--debug', action='store_true')
     FLAGS, _ = parser.parse_known_args()
+
     if FLAGS.debug:
-        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+        LEVEL = logging.DEBUG
     else:
-        logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+        LEVEL = logging.INFO
+    logging.basicConfig(level=logging.INFO)
 
     main(_)
 

@@ -1,26 +1,31 @@
-#! /usr/bin/env python3.6
 """
-Constructs a key-value stor mapping Wikidata IDs to a list of related Wikidata
+Constructs a key-value store mapping Wikidata IDs to a list of related Wikidata
 entities
 """
 import argparse
+from collections import defaultdict
 import csv
 import json
 import logging
+import pickle
 import re
 import sys
 
 from sqlitedict import SqliteDict
 
+from util import generate_from_wikidump, load_allowed_entities
 
 logger = logging.getLogger(__name__)
+
+
 BAD_DATATYPES = ['external-id', 'url', 'commonsMedia', 'globecoordinate']
 RE_PROPERTY = re.compile('(?<=http:\/\/www.wikidata.org\/entity\/)P\d+')
 
 
-def load(fname):
+def load_allowed_properties(fname):
     """Loads a set of allowed properties from a csv file."""
     if fname is None:
+        logger.info('Properties not restricted')
         return
     else:
         logger.info('Loading allowed properties from: "%s"', fname)
@@ -38,80 +43,142 @@ def load(fname):
 
 
 def main(_):
-    allowed_properties = load(FLAGS.properties)
+    allowed_properties = load_allowed_properties(FLAGS.properties)
+    allowed_entities = load_allowed_entities(FLAGS.entities)
     logger.info('Opening data file at: "%s"', FLAGS.db)
-    with SqliteDict(FLAGS.db, autocommit=True) as db:
-        for line in sys.stdin:
-            # Read JSON data into Python object
-            if line[0] == '[':
-                line = line[1:]
-            elif line[-1] == ']':
-                line = line[:-1]
-            else:
-                line = line[:-2]
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning('Could not decode line to JSON:\n"%s"\n', line)
+
+    if FLAGS.in_memory:
+        db = defaultdict(list)
+    else:
+        db = SqliteDict(FLAGS.db, autocommit=True, journal_mode='OFF')
+
+    if FLAGS.reverse and not FLAGS.in_memory:
+        raise RuntimeError('Cannot add reverse relations to out-of-memory db '
+                           '(takes too long).')
+
+    for data in generate_from_wikidump(FLAGS.input):
+        id = data['id']
+
+        # Check if data pertains to a given entity
+        if allowed_entities is not None:
+            if id not in allowed_entities:
                 continue
 
-            id = data['id']
-            claims = data['claims']
-            properties = []
-            for property, snaks in claims.items():
-                if allowed_properties is not None:
-                    if property not in allowed_properties:
+        claims = data['claims']
+        properties = []
+        for property, snaks in claims.items():
+
+            # Check if property is allowed
+            if allowed_properties is not None:
+                if property not in allowed_properties:
+                    continue
+
+            for snak in snaks:
+
+                # Check if top-level relation is allowed
+                mainsnak = snak['mainsnak']
+                if mainsnak['datatype'] in BAD_DATATYPES:
+                    continue
+                try:
+                    value = mainsnak['datavalue']
+                except KeyError:
+                    continue
+
+                # Seperate processing for monolingual text
+                if mainsnak['datatype'] == 'monolingualtext':
+                    # Only accept english strings...
+                    if value['value']['language'] != 'en':
                         continue
-                for snak in snaks:
-                    # First get top-level relation
-                    mainsnak = snak['mainsnak']
-                    if mainsnak['datatype'] in BAD_DATATYPES:
-                        continue
-                    try:
-                        value = mainsnak['datavalue']
-                    except KeyError:
-                        continue
-                    # Seperate processing for monolingual text
-                    if mainsnak['datatype'] == 'monolingualtext':
-                        # Only accept english strings...
-                        if value['value']['language'] != 'en':
+
+                # If relation is between entities, check that tail entity is
+                # allowed
+                if allowed_entities is not None:
+                    if mainsnak['datatype'] == 'wikibase-item':
+                        tail_id = mainsnak['datavalue']['value']['id']
+                        if tail_id not in allowed_entities:
                             continue
-                    properties.append(((property, None), value))
-                    # Next get qualifiers
-                    if 'qualifiers' in snak:
-                        qualifiers = snak['qualifiers']
-                        for qual_prop, qual_snaks in qualifiers.items():
-                            qual_prop = (property, qual_prop)
-                            for qual_snak in qual_snaks:
-                                if qual_snak['datatype'] in BAD_DATATYPES:
+
+                properties.append((property, value))
+
+                # Next process qualifiers
+                if 'qualifiers' in snak:
+
+                    qualifiers = snak['qualifiers']
+
+                    for qual_prop, qual_snaks in qualifiers.items():
+
+                        qual_prop = property+':'+qual_prop
+                        for qual_snak in qual_snaks:
+
+                            # Check relation is allowed
+                            if qual_snak['datatype'] in BAD_DATATYPES:
+                                continue
+                            try:
+                                qual_value = qual_snak['datavalue']
+                            except KeyError:
+                                continue
+
+                            # Seperate processing for monolingual text
+                            if qual_snak['datatype'] == 'monolingualtext':
+                                # Only accept english strings...
+                                if qual_value['value']['language'] != 'en':
                                     continue
-                                try:
-                                    qual_value = qual_snak['datavalue']
-                                except KeyError:
-                                    continue
-                                if qual_snak['datatype'] == 'monolingualtext':
-                                    # Only accept english strings...
-                                    if qual_value['value']['language'] != 'en':
+                            # If relation is between entities, check that tail
+                            # entity is allowed
+                            if allowed_entities is not None:
+                                if qual_snak['datatype'] == 'wikibase-item':
+                                    tail_id = qual_snak['datavalue']['value']['id']
+                                    if tail_id not in allowed_entities:
                                         continue
-                                properties.append((qual_prop, qual_value))
 
-            logger.debug('Entity: %s', id)
-            logger.debug('Properties: %s', properties)
+                            properties.append((qual_prop, qual_value))
 
+        logger.debug('Entity: %s', id)
+        logger.debug('Properties: %s', properties)
+
+        if FLAGS.in_memory:
+            db[id].extend(properties)
+        else:
             db[id] = properties
+
+        # Optional: Add reverse links
+        if FLAGS.reverse:
+            logger.debug('Adding reverse links')
+            for rel, tail in properties:
+                if tail['type'] != 'wikibase-entityid':
+                    continue
+                tail_id = tail['value']['id']
+                bw_prop = 'R:' + rel
+                bw_value = {
+                    'type': 'wikibase-entityid',
+                    'value': {
+                        'id': id
+                    }
+                }
+                db[tail_id].append((bw_prop, bw_value))
+
+    if FLAGS.in_memory:
+        logger.info('Dumping')
+        with open(FLAGS.db, 'wb') as f:
+            pickle.dump(db, f)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('input', type=str)
     parser.add_argument('--db', type=str, default='relation.db')
     parser.add_argument('-p', '--properties', type=str, default=None)
+    parser.add_argument('-e', '--entities', type=str, default=None)
+    parser.add_argument('--reverse', action='store_true')
+    parser.add_argument('--in_memory', action='store_true')
     parser.add_argument('--debug', action='store_true')
     FLAGS, _ = parser.parse_known_args()
 
     if FLAGS.debug:
-        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+        LEVEL = logging.DEBUG
     else:
-        logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+        LEVEL = logging.INFO
+    logging.basicConfig(format=LOG_FORMAT, level=LEVEL)
 
     main(_)
 
