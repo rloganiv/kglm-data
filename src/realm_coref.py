@@ -9,7 +9,7 @@ from overrides import overrides
 logger = logging.getLogger(__name__)
 
 
-def _window(l, size=2):
+def _window(l, size=3):
     n = len(l)
     for i in range(n-size+1):
         yield l[i:i+size]
