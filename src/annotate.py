@@ -94,15 +94,13 @@ class Annotator:
         self._unmatch_shady_nel = unmatch_shady_nel
         self._prune_clusters = prune_clusters
         self._nlp = spacy.load('en_core_web_sm', disable=['parser', 'ner'])
-        self._last_seen = dict()  # Last location entity was seen in text
-        self._parents = dict()  # Lookup parents that added node to graph
-        self._alias_lookup = PrefixTree()  # Maps aliases in the text to ids
+        self._reset()
 
     def _reset(self):
         """Resets the internal state of the ``Annotator``."""
-        self._last_seen = dict()
-        self._parents = dict()
-        self._alias_lookup = PrefixTree()
+        self._last_seen = dict()  # Last location entity was seen in text
+        self._parents = defaultdict(list)  # Lookup parents that added node to graph
+        self._alias_lookup = PrefixTree()  # Maps aliases in the text to ids
 
     def _json_to_doc(self, json_data: Dict[str, Any]) -> Doc:
         """Converts a JSON object to a SpaCy ``Doc``.
@@ -278,7 +276,7 @@ class Annotator:
 
             logger.debug('Adding child id "%s" to graph w/ parent "%s"',
                          child_id, id)
-            self._parents[child_id] = (prop, id)
+            self._parents[child_id].append((prop, id))
             for child_alias in child_aliases:
                 child_alias_tokens = [x.text for x in self._nlp.tokenizer(child_alias)]
                 if child_alias_tokens not in self._alias_lookup:
@@ -402,26 +400,23 @@ class Annotator:
             loc = n - len(token_stack) + len(match_stack)
             if id in self._last_seen :
                 logger.debug('Id has been seen before')
-                relation = '@@REFLEXIVE@@'
-                parent_id = id
+                relation = ['@@REFLEXIVE@@']
+                parent_id = [id]
             elif id not in self._parents:
                 logger.debug('Id is not in expanded graph')
-                relation = '@@NEW@@'
-                parent_id = id
+                relation = ['@@NEW@@']
+                parent_id = [id]
             else:
                 logger.debug('Id has been seen before')
-                relation, parent_id = self._parents[id]
-                logger.debug('Has parent "%s"', id)
+                parents = self._parents[id]
+                logger.debug('Has parents "%s"', parents)
                 # Check distance cutoff. If distance is too great than relation
                 # is reflexive (provided we are looking at an entity instead of
                 # a literal).
-                parent_loc = self._last_seen[parent_id]
-                if (loc - parent_loc) > self._distance_cutoff:
-                    if id not in self._alias_db:
-                        continue
-                    else:
-                        relation = '@@CUTOFF@@'
-                        parent_id = id
+                parent_locs = [self._last_seen[parent_id] for _, parent_id in parents]
+                parents = [x for x, y in zip(parents, parent_locs) if y < self._distance_cutoff]
+                if len(parents) > 0:
+                    relation, parent_id = zip(*parents)
 
             # If we've survived to this point then there is a valid match for
             # everything remaining in the match stack, and so we should
