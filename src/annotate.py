@@ -535,7 +535,7 @@ def worker(q: JoinableQueue, i: int, output, print_lock: Lock, FLAGS: Tuple[Any]
                           unmatch_shady_nel=FLAGS.unmatch_shady_nel,
                           prune_clusters=FLAGS.prune_clusters)
     while True:
-        logger.info('Worker %i taking a task from the queue', i)
+        logger.debug('Worker %i taking a task from the queue', i)
         json_data = q.get()
         if json_data is None:
             break
@@ -544,7 +544,7 @@ def worker(q: JoinableQueue, i: int, output, print_lock: Lock, FLAGS: Tuple[Any]
         output.write(json.dumps(annotation)+'\n')
         print_lock.release()
         q.task_done()
-        logger.info('Worker %i finished a task', i)
+        logger.debug('Worker %i finished a task', i)
 
 def loader(q: JoinableQueue, FLAGS: Tuple[Any]) -> None:
     with open(FLAGS.input, 'r') as f:
