@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class Stats():
     def __init__(self, alias_db):
-        self._alias_db = alias_db
+        # self._alias_db = alias_db
         self._prop_counts = Counter()
         self._n = 0
         self._n_entities = 0
@@ -36,13 +36,13 @@ class Stats():
             self._n_entities += 1
             self._total_annotations += 1
             relation = annotation['relation']
-            if relation == '@@NEW@@':
+            if relation == ['@@NEW@@']:
                 self._new_entities += 1
-            elif relation == '@@REFLEXIVE@@':
+            elif relation == ['@@REFLEXIVE@@']:
                 self._reflexive_entities += 1
             else:
                 self._related_entities += 1
-                self._prop_counts[relation] += 1
+            #    self._prop_counts[relation] += 1
             span = annotation['span']
             span_length = span[1] - span[0]
             self._n_entity_tokens += span_length
@@ -71,21 +71,21 @@ class Stats():
         print('P(NEL) = %0.4f' % (self._n_nel / self._n_entities))
         print('P(COREF) = %0.4f' % (self._n_coref / self._n_entities))
         print('P(KG) = %0.4f' % (self._n_kg / self._n_entities))
-        print('=== Property Counts ===')
-        total = sum(self._prop_counts.values())
-        for property, count in self._prop_counts.most_common():
-            root, child = property
-            try:
-                root_name = self._alias_db[root][0]
-            except:
-                root_name = 'NA'
-            try:
-                child_name = self._alias_db[child][0]
-            except:
-                child_name = 'NA'
+        # print('=== Property Counts ===')
+        # total = sum(self._prop_counts.values())
+        # for property, count in self._prop_counts.most_common():
+        #     root, child = property
+        #     try:
+        #         root_name = self._alias_db[root][0]
+        #     except:
+        #         root_name = 'NA'
+        #     try:
+        #         child_name = self._alias_db[child][0]
+        #     except:
+        #         child_name = 'NA'
 
-            print('%s\t%s:%s\t%i\t%0.4f' %
-                  (property, root_name, child_name, count, count/total))
+        #     print('%s\t%s:%s\t%i\t%0.4f' %
+        #           (property, root_name, child_name, count, count/total))
 
 
 def main(_):
