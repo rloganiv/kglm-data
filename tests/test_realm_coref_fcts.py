@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 class TestRealmCorefFcts(unittest.TestCase):
     def test_window(self):
         x = [1,2,3,4]
-        actual = list(_window(x))
-        expected = [[1,2],[2,3],[3,4]]
+        actual = list(_window(x, size=3))
+        expected = [[1,2,3],[2,3,4]]
         self.assertListEqual(actual, expected)
 
     def test_add_offset(self):

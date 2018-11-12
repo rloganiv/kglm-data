@@ -1,7 +1,7 @@
 """
 Utilities.
 """
-from typing import Any, Dict, Generator, Set
+from typing import Any, Dict, Generator, List, Set
 
 import gzip
 import json
@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 
 LOG_FORMAT = '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
+
+
+def flatten_tokens(tokens: List[List[str]]) -> List[str]:
+    return [word for sent in tokens for word in sent]
+
 
 def format_wikilink(wikilink: str) -> str:
     """Formats a wikilink"""
