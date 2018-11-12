@@ -2,8 +2,7 @@
 """
 Adds entity annotations to JSON-lines files.
 """
-from typing import Any, Deque, Dict, List, Set, Tuple
-
+from typing import Any, Deque, Dict, List, Set, Tuple 
 import argparse
 from collections import defaultdict, deque
 import json
@@ -447,12 +446,7 @@ class Annotator:
                 logger.debug('Id has been seen before')
                 relation = ['@@REFLEXIVE@@']
                 parent_id = [id]
-            elif id not in self._parents:
-                logger.debug('Id is not in expanded graph')
-                relation = ['@@NEW@@']
-                parent_id = [id]
-            else:
-                logger.debug('Id has been seen before')
+            elif id in self._parents:
                 parents = self._parents[id]
                 logger.debug('Has parents "%s"', parents)
                 # Check distance cutoff. If distance is too great than relation
@@ -460,10 +454,14 @@ class Annotator:
                 # a literal).
                 parent_locs = [self._last_seen[parent_id] for _, parent_id in parents]
                 parents = [x for x, y in zip(parents, parent_locs) if y < self._distance_cutoff]
-                if not parents:
+                if parents:
                     relation, parent_id = zip(*parents)
                     relation = list(relation)
                     parent_id = list(parent_id)
+            else:
+                logger.debug('Id is not in expanded graph')
+                relation = ['@@NEW@@']
+                parent_id = [id]
 
             # If we've survived to this point then there is a valid match for
             # everything remaining in the match stack, and so we should
