@@ -45,6 +45,9 @@ def main(_):
             span = annotation['span']
             source = annotation['source']
 
+            if len(relations) != len(set(relations)):
+                raise RuntimeError('Duplicate relations detected')
+
             # If relation is interesting get the span of text
             for relation, parent_id in zip(relations, parent_ids):
 

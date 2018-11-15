@@ -22,9 +22,10 @@ class TreeNode(dict):
 
 class PrefixTree(object):
     """Basic prefix tree implementation."""
-    def __init__(self) -> None:
+    def __init__(self, fixed=True) -> None:
         self._root = TreeNode()
         self._active = self._root
+        self._fixed = fixed
 
     def __contains__(self, iter: Iterable[str]):
         """Sees whether a sequence of elements is a path in the tree."""
@@ -77,8 +78,14 @@ class PrefixTree(object):
             if elt not in active:
                 active[elt] = TreeNode()
             active = active[elt]
-        if active.id != id and active.id is not None:
-            logger.warning('Overwriting existing id "%s" with new id "%s"',
-                           active.id, id)
-        active.id = id
+        if active.id is None:
+            active.id = id
+        elif active.id != id:
+            if self._fixed:
+                logger.warning('Collision existing id "%s" with new id "%s"',
+                               active.id, id)
+            else:
+                logger.warning('Overwriting existing id "%s" with new id "%s"',
+                               active.id, id)
+                active.id = id
 

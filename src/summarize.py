@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 class Stats():
-    def __init__(self, alias_db):
-        # self._alias_db = alias_db
+    def __init__(self):
         self._prop_counts = Counter()
+        self._p_source_given_new = Counter()
         self._n = 0
         self._n_entities = 0
         self._n_tokens = 0
@@ -38,6 +38,7 @@ class Stats():
             relation = annotation['relation']
             if relation == ['@@NEW@@']:
                 self._new_entities += 1
+                self._p_source_given_new[annotation['source']] += 1
             elif relation == ['@@REFLEXIVE@@']:
                 self._reflexive_entities += 1
             else:
@@ -71,26 +72,14 @@ class Stats():
         print('P(NEL) = %0.4f' % (self._n_nel / self._n_entities))
         print('P(COREF) = %0.4f' % (self._n_coref / self._n_entities))
         print('P(KG) = %0.4f' % (self._n_kg / self._n_entities))
-        # print('=== Property Counts ===')
-        # total = sum(self._prop_counts.values())
-        # for property, count in self._prop_counts.most_common():
-        #     root, child = property
-        #     try:
-        #         root_name = self._alias_db[root][0]
-        #     except:
-        #         root_name = 'NA'
-        #     try:
-        #         child_name = self._alias_db[child][0]
-        #     except:
-        #         child_name = 'NA'
 
-        #     print('%s\t%s:%s\t%i\t%0.4f' %
-        #           (property, root_name, child_name, count, count/total))
+        total = sum(self._p_source_given_new.values())
+        for source, count in self._p_source_given_new.items():
+            print('P(%s|@@NEW@@) = %0.4f' % (source, count / total))
 
 
 def main(_):
-    alias_db = SqliteDict(FLAGS.alias_db, flag='r')
-    stats = Stats(alias_db)
+    stats = Stats()
     with open(FLAGS.input, 'r') as f:
         for line in f:
             data = json.loads(line)

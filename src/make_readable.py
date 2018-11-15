@@ -31,23 +31,41 @@ def main(_):
             for annotation in annotations:
 
                 id = annotation['id']
-                parent_id = annotation['parent_id']
-
-                # Unpack relation string
-                relation = annotation['relation']
-                if relation is None:
-                    continue
-                readable = []
-                for piece in relation.split(':'):
-                    if piece[0] == 'R':
-                        readable.append('Reverse')
-                    else:
-                        readable.append(lookup(piece))
-                readable = ':'.join(readable)
-
                 new_id = (id, lookup(id))
-                new_relation = (relation, readable)
-                new_parent_id = (parent_id, lookup(parent_id))
+
+                parent_ids = annotation['parent_id']
+                relations = annotation['relation']
+
+                parent_strings = []
+                relation_strings = []
+
+                for parent_id, relation in zip(parent_ids, relations):
+
+                    # Unpack relation string
+                    if relation is None:
+                        continue
+                    readable = []
+                    for piece in relation.split(':'):
+                        if piece[0] == 'R':
+                            readable.append('Reverse')
+                        else:
+                            readable.append(lookup(piece))
+                    readable = ':'.join(readable)
+
+                    parent_strings.append(lookup(parent_id))
+                    relation_strings.append(readable)
+
+                parent_ids = ', '.join(parent_ids)
+                parent_strings = ', '.join(parent_strings)
+                new_parent_id = (parent_ids, parent_strings)
+
+                relations = ', '.join(relations)
+                relation_strings = ', '.join(relation_strings)
+                new_relation = (relations, relation_strings)
+
+                # OLD APPROACH
+                # new_relation = (relation, readable)
+                # new_parent_id = (parent_id, lookup(parent_id))
 
                 readable_annotation = annotation.copy()
                 readable_annotation['id'] = new_id

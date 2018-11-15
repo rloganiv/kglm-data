@@ -2,7 +2,7 @@
 """
 Adds entity annotations to JSON-lines files.
 """
-from typing import Any, Deque, Dict, List, Set, Tuple 
+from typing import Any, Deque, Dict, List, Set, Tuple
 import argparse
 from collections import defaultdict, deque
 import json
@@ -63,7 +63,7 @@ class Annotator:
         distance_cutoff : ``int``
             Maximum distance (in words) allowed between parent and child entities.
         match_aliases : ``bool``
-        unmatch_shady_nel : ``bool``
+        unmatch : ``bool``
         prune_clusters : ``bool``
     """
     # pylint:
@@ -74,7 +74,7 @@ class Annotator:
                  wiki_db: SqliteDict,
                  distance_cutoff: int = float('inf'),
                  match_aliases: bool = False,
-                 unmatch_shady_nel: bool = False,
+                 unmatch: bool = False,
                  prune_clusters: bool = False) -> None:
 
         # WikiData data structures
@@ -85,7 +85,7 @@ class Annotator:
         # Optional annotation arguments
         self._distance_cutoff = distance_cutoff
         self._match_aliases = match_aliases
-        self._unmatch_shady_nel = unmatch_shady_nel
+        self._unmatch = unmatch
         self._prune_clusters = prune_clusters
 
         # NLP pipeline to apply to text
@@ -100,7 +100,7 @@ class Annotator:
         annotating a new document.
         """
         self._last_seen = dict()  # Tracks last time entity was seen
-        self._parents = defaultdict(list)  # Tracks entities of yet to be seen entities
+        self._parents = defaultdict(set)  # Tracks entities of yet to be seen entities
         self._alias_lookup = PrefixTree()  # String matching data structure
 
     def _add_wikilinks(self,
@@ -148,10 +148,10 @@ class Annotator:
                 logger.debug('Rejected - Key not found')
                 continue
 
-            is_not_shady = key in wiki_ids if self._unmatch_shady_nel else True
-            if key in self._wiki_db and is_not_shady:
+            matches = id in wiki_ids if self._unmatch else True
+            if matches:
                 for token in doc[start:end]:
-                    logger.debug('%s - %s', token, token._.id)
+                    logger.debug('%s - %s', token, id)
                     token._.id = id
                     token._.source = 'NEL'
 
@@ -238,7 +238,7 @@ class Annotator:
                         token._.id = id
                         token._.source = 'COREF'
 
-    def _json_to_doc(self, json_data: Dict[str, Any]) -> Doc:
+    def _json_to_doc(self, json_data: Dict[str, Any], root_id: str) -> Doc:
         """Converts a JSON object to a SpaCy ``Doc``
 
         Args:
@@ -258,6 +258,7 @@ class Annotator:
 
         # Add wikilink data
         wiki_ids = self._add_wikilinks(doc, json_data['entities'])
+        wiki_ids.add(root_id)  # STUPID HACK: Prevents unmatching article subject
 
         # Add nel data
         self._add_nel(doc, json_data['nel'], wiki_ids)
@@ -303,9 +304,17 @@ class Annotator:
             if child_id is None:
                 continue
 
+            if prop == 'P395':
+                logger.debug('Handling Commons relation')
+                for child_alias in child_aliases:
+                    child_alias_tokens = [x.text for x in self._nlp.tokenizer(child_alias)]
+                    if child_alias_tokens not in self._alias_lookup:
+                        self._alias_lookup.add(child_alias_tokens, id)
+                return
+
             logger.debug('Adding child id "%s" to graph w/ parent "%s"',
                          child_id, id)
-            self._parents[child_id].append((prop, id))
+            self._parents[child_id].add((prop, id))
             for child_alias in child_aliases:
                 child_alias_tokens = [x.text for x in self._nlp.tokenizer(child_alias)]
                 if child_alias_tokens not in self._alias_lookup:
@@ -443,8 +452,13 @@ class Annotator:
             logger.debug('Current stack has id "%s". Looking up story...', id)
             loc = n - len(token_stack) + len(match_stack)
             if id in self._last_seen:
-                logger.debug('Id has been seen before')
-                relation = ['@@REFLEXIVE@@']
+                logger.debug('Id has been seen before at location: %i',
+                             self._last_seen[id])
+                if (loc - self._last_seen[id]) > self._distance_cutoff:
+                    logger.debug('...but past cutoff')
+                    relation = ['@@NEW@@']
+                else:
+                    relation = ['@@REFLEXIVE@@']
                 parent_id = [id]
             elif id in self._parents:
                 parents = self._parents[id]
@@ -452,12 +466,17 @@ class Annotator:
                 # Check distance cutoff. If distance is too great than relation
                 # is reflexive (provided we are looking at an entity instead of
                 # a literal).
-                parent_locs = [self._last_seen[parent_id] for _, parent_id in parents]
+                parent_locs = [(loc - self._last_seen[parent_id]) for _, parent_id in parents]
+                logger.debug('With locs %s', parent_locs)
                 parents = [x for x, y in zip(parents, parent_locs) if y < self._distance_cutoff]
+                logger.debug('Has surviving parents "%s"', parents)
                 if parents:
                     relation, parent_id = zip(*parents)
                     relation = list(relation)
                     parent_id = list(parent_id)
+                else:
+                    relation = ['@@NEW@@']
+                    parent_id = [id]
             else:
                 logger.debug('Id is not in expanded graph')
                 relation = ['@@NEW@@']
@@ -466,13 +485,16 @@ class Annotator:
             # If we've survived to this point then there is a valid match for
             # everything remaining in the match stack, and so we should
             # annotate.
-            self._expand(id, loc)
             for token, _ in match_stack:
                 token._.id = id
                 token._.relation = relation
                 token._.parent_id = parent_id
                 if token._.source is None:
                     token._.source = 'KG'
+            # Lastly expand the current node, but only if it really corresponds
+            # to an entity
+            if id in self._alias_db:
+                self._expand(id, loc)
 
     def _serialize_annotations(self, doc: Doc) -> Doc:
         """Serializes annotation data.
@@ -539,10 +561,10 @@ class Annotator:
             return json_data
         else:
             self._add_aliases(root_id)
+            logger.debug('Alias lookup: %s', self._alias_lookup._root)
 
-        doc = self._json_to_doc(json_data)
+        doc = self._json_to_doc(json_data, root_id)
 
-        self._expand(root_id, 0)
         self._annotate_tokens(doc)
 
         annotations = self._serialize_annotations(doc)
@@ -570,7 +592,7 @@ def worker(q: JoinableQueue, i: int, output, print_lock: Lock, FLAGS: Tuple[Any]
                           wiki_db,
                           distance_cutoff=FLAGS.cutoff,
                           match_aliases=FLAGS.match_aliases,
-                          unmatch_shady_nel=FLAGS.unmatch_shady_nel,
+                          unmatch=FLAGS.unmatch,
                           prune_clusters=FLAGS.prune_clusters)
     while True:
         logger.debug('Worker %i taking a task from the queue', i)
@@ -637,7 +659,7 @@ if __name__ == '__main__':
     parser.add_argument('--match_aliases', '-m', action='store_true',
                         help='Whether or not to exact match aliases of entities '
                              'whose wikipedia links appear in the document')
-    parser.add_argument('--unmatch_shady_nel', '-i', action='store_true',
+    parser.add_argument('--unmatch', '-u', action='store_true',
                         help='Whether or not to ignore ids from NEL which do '
                              'not match ids from wikipedia')
     parser.add_argument('--prune_clusters', '-p', action='store_true',
