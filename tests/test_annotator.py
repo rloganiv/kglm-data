@@ -151,7 +151,7 @@ class TestStandardAnnotator(unittest.TestCase):
 
     def test_json_to_doc(self):
         """Tests that the whole pipeline works (without any flags enabled)."""
-        doc = self.annotator._json_to_doc(self.json_data)
+        doc = self.annotator._json_to_doc(self.json_data, root_id='Q0')
         self.assertEqual(doc[0]._.id, 'Q0')
         self.assertEqual(doc[0]._.source, 'WIKI')
         self.assertEqual(doc[4]._.id, 'Q3')
@@ -192,7 +192,7 @@ class TestStandardAnnotator(unittest.TestCase):
         Test that annotator can extract stack of tokens with existing
         annotations (from WIKI/NEL/COREF step)
         """
-        doc = self.annotator._json_to_doc(self.json_data)
+        doc = self.annotator._json_to_doc(self.json_data, root_id='Q0')
         token_stack = deque(reversed(doc))
         start_length = len(token_stack)
         active =  token_stack.pop()
@@ -206,7 +206,7 @@ class TestStandardAnnotator(unittest.TestCase):
         Test that annotator can identify stack of tokens with no
         annotations.
         """
-        doc = self.annotator._json_to_doc(self.json_data)
+        doc = self.annotator._json_to_doc(self.json_data, root_id='Q0')
         token_stack = deque(reversed(doc))
         token_stack.pop()  # Pop 'Robert'
         token_stack.pop()  # Pop 'Plant'
@@ -239,7 +239,7 @@ class TestStandardAnnotator(unittest.TestCase):
         self.assertEqual(len(token_stack), 0)
 
     def test_annotate_tokens(self):
-        doc = self.annotator._json_to_doc(self.json_data)
+        doc = self.annotator._json_to_doc(self.json_data, root_id='Q0')
         self.annotator._annotate_tokens(doc)
         self.assertEqual(doc[0]._.id, 'Q0')
         self.assertEqual(doc[0]._.source, 'WIKI')
@@ -255,7 +255,7 @@ class TestStandardAnnotator(unittest.TestCase):
         self.assertEqual(doc[7]._.relation, ['@@REFLEXIVE@@'])
 
     def test_serialize_annotations(self):
-        doc = self.annotator._json_to_doc(self.json_data)
+        doc = self.annotator._json_to_doc(self.json_data, root_id='Q0')
         self.annotator._annotate_tokens(doc)
         annotations = self.annotator._serialize_annotations(doc)
         expected = [
@@ -305,7 +305,7 @@ class TestStandardAnnotator(unittest.TestCase):
         annotator = Annotator(alias_db=self.alias_db,
                               relation_db=self.relation_db,
                               wiki_db=self.wiki_db,
-                              unmatch_shady_nel=True)
+                              unmatch=True)
         tokens = flatten_tokens(self.json_data['tokens'])
         doc = Doc(annotator._nlp.vocab, words=tokens)
         wiki_ids = {'Q0'}
