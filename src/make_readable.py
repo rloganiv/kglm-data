@@ -35,6 +35,10 @@ def main(_):
 
                 parent_ids = annotation['parent_id']
                 relations = annotation['relation']
+                parent_ids, relations = *sorted(
+                    list(zip(parent_ids, relations)),
+                    key = lambda x: x[0]
+                )
 
                 parent_strings = []
                 relation_strings = []
