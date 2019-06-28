@@ -1,6 +1,6 @@
 beautifulsoup4==4.6.3
 Pint==0.8.1
-requests==2.19.1
+requests==2.20.0
 simplejson==3.16.0
 spacy==2.0.12
 sqlitedict==1.5.0
