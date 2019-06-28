@@ -8,7 +8,7 @@ import sys
 from spacy.tokens import Doc, Token
 
 from kglm_data.annotate import Annotator
-from kglm.util import flatten_tokens
+from kglm_data.util import flatten_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -127,9 +127,9 @@ class TestStandardAnnotator(unittest.TestCase):
         # Assume "Led Zeppelin" is not a viable alias, then it should be
         # pruned.
         cluster = [[0,1], [4,5], [7,7]]
-        alias_lookup = {('Robert', 'Plant')}
-        cluster = self.annotator._prune_cluster(self.doc, cluster, alias_lookup)
-        self.assertListEqual(cluster, [[0,1], [7, 7]])
+        alias_token_set = {'Robert', 'Plant'}
+        cluster = self.annotator._prune_cluster(self.doc, cluster, alias_token_set)
+        self.assertListEqual(cluster, [[0, 1], [7, 7]])
 
     def test_propagate_ids(self):
         """
