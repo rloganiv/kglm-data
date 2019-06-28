@@ -1,7 +1,7 @@
 import logging
 import unittest
 
-from src.realm_coref import _window, _add_offset, _merge_clusters
+from kglm_data.realm_coref import _window, _add_offset, _merge_clusters
 
 logger = logging.getLogger(__name__)
 

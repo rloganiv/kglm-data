@@ -7,8 +7,8 @@ import sys
 
 from spacy.tokens import Doc, Token
 
-from src.annotate import Annotator
-from src.util import flatten_tokens
+from kglm_data.annotate import Annotator
+from kglm.util import flatten_tokens
 
 logger = logging.getLogger(__name__)
 

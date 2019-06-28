@@ -1,7 +1,7 @@
 import logging
 import unittest
 
-from src.prefix_tree import PrefixTree, TreeNode
+from kglm_data.prefix_tree import PrefixTree, TreeNode
 
 logger = logging.getLogger(__name__)
 

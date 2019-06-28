@@ -1,4 +1,4 @@
 from setuptools import setup
 
-setup(name='realm-data',
-      packages=['src'])
+setup(name='kglm-data',
+      packages=['kglm_data'])
