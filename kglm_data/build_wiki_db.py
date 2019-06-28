@@ -10,7 +10,7 @@ import sys
 
 from sqlitedict import SqliteDict
 
-from util import format_wikilink, generate_from_wikidump, \
+from kglm_data.util import format_wikilink, generate_from_wikidump, \
     load_allowed_entities, LOG_FORMAT
 
 logger = logging.getLogger(__name__)

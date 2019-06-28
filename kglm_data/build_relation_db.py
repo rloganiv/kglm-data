@@ -13,7 +13,7 @@ import sys
 
 from sqlitedict import SqliteDict
 
-from util import generate_from_wikidump, load_allowed_entities
+from kglm_data.util import generate_from_wikidump, load_allowed_entities
 
 logger = logging.getLogger(__name__)
 

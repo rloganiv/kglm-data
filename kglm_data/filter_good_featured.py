@@ -7,7 +7,7 @@ import json
 import logging
 import re
 
-from src.wikidump_to_jsonl import page_generator
+from kglm_data.wikidump_to_jsonl import page_generator
 
 logger = logging.getLogger(__name__) # pylint: disable=invalid-name
 RE_GF = re.compile(r'{{([Gg]ood|[Ff]eatured) [Aa]rticle}}')

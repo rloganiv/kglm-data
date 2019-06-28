@@ -11,7 +11,7 @@ import sys
 
 from sqlitedict import SqliteDict
 
-from util import generate_from_wikidump, load_allowed_entities, LOG_FORMAT
+from kglm_data.util import generate_from_wikidump, load_allowed_entities, LOG_FORMAT
 
 logger = logging.getLogger(__name__)
 

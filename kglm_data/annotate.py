@@ -16,9 +16,9 @@ from spacy.lang.en.stop_words import STOP_WORDS
 from spacy.tokens import Doc, Token
 from sqlitedict import SqliteDict
 
-from prefix_tree import PrefixTree
-from render import process_literal
-from util import format_wikilink, flatten_tokens, LOG_FORMAT
+from kglm_data.prefix_tree import PrefixTree
+from kglm_data.render import process_literal
+from kglm_data.util import format_wikilink, flatten_tokens, LOG_FORMAT
 
 logger = logging.getLogger(__name__) # pylint: disable=invalid-name
 

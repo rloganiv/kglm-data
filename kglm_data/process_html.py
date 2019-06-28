@@ -15,7 +15,7 @@ from spacy.language import Language
 from spacy.tokens import Doc
 from sqlitedict import SqliteDict
 
-from src.util import format_wikilink
+from kglm_data.util import format_wikilink
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
