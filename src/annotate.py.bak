@@ -16,9 +16,9 @@ from spacy.lang.en.stop_words import STOP_WORDS
 from spacy.tokens import Doc, Token
 from sqlitedict import SqliteDict
 
-from prefix_tree import PrefixTree
-from render import process_literal
-from util import format_wikilink, flatten_tokens, LOG_FORMAT
+from src.prefix_tree import PrefixTree
+from src.render import process_literal
+from src.util import format_wikilink, flatten_tokens, LOG_FORMAT
 
 logger = logging.getLogger(__name__) # pylint: disable=invalid-name
 
@@ -60,11 +60,7 @@ def capitalize(tokens):
 def _bad_alias(tokens):
     if all(x.tag_ in PRONOUNS for x in tokens):
         return True
-    if all(x.pos_ == 'PUNCT' for x in tokens):
-        return True
     if all(x.text in STOP_WORDS for x in tokens):
-        return True
-    if all(x.text.lower() in STOP_WORDS for x in tokens):
         return True
     return False
 
@@ -189,7 +185,7 @@ class Annotator:
     @staticmethod
     def _prune_cluster(doc: Doc,
                        cluster: List[List[int]],
-                       alias_token_set: Set[str]) -> List[List[int]]:
+                       alias_lookup: Set[str]) -> List[List[int]]:
         logger.debug('Pruning cluster')
 
         # Prune step
@@ -202,21 +198,14 @@ class Annotator:
                 if mention[0].tag_ in PRONOUNS:
                     new_cluster.append([start, end])
                     logger.debug('Found pronoun: %s', mention)
-                    continue
 
             # Check for alias match
-            mention_tokens = tuple(t.text for t in mention)
-            mention_types = tuple(x.tag_ for x in mention)
-            keep = True
-            for token, type in zip(mention_tokens, mention_types):
-                not_in_alias = token not in alias_token_set
-                not_det = type != 'DT'
-                if not_in_alias and not_det:
-                    logger.debug('Encountered invalid token: "%s" - rejecting', token)
-                    keep = False
-                    break
-            if keep:
+            mention_tokens = tuple(x.text for x in mention)
+            if mention_tokens in alias_lookup:
                 new_cluster.append([start, end])
+                logger.debug('Exact alias match: %s', mention)
+            else:
+                logger.debug('No match: %s', mention)
 
         return new_cluster
 
@@ -229,35 +218,26 @@ class Annotator:
             doc: ``Doc``
                 Document to propagate ids in. Modified in place.
         """
+        if self._prune_clusters:
+            # Create an exact match tree for aliases
+            for id in wiki_ids:
+                alias_lookup = set()
+                aliases = self._alias_db[id]
+                for alias in aliases:
+                    if _bad_alias(self._nlp.tokenizer(alias)):
+                        continue
+                    alias_tokens = tuple(x.text for x in self._nlp.tokenizer(alias))
+                    alias_lookup.add(alias_tokens)
+                    alias_lookup.add(capitalize(alias_tokens))
 
         for i, cluster in enumerate(clusters):
 
             # (Optional) Prune mentions / tokens from cluster which do not
             # correspond to a pronoun or entity alias
             if self._prune_clusters:
-
-                # Extract set of unique entity ids of mentions in the cluster
-                pre_pruned_cluster_ids = self._detect_cluster_ids(doc, cluster)
-                logger.debug('Detected following prepruned ids for cluster %i: %s', i, pre_pruned_cluster_ids)
-                if len(pre_pruned_cluster_ids) != 1:
-                    logger.debug('Number of prepruned ids is not equal to 1, skipping propagation')
-                    continue
-                pre_pruned_cluster_id = pre_pruned_cluster_ids.pop()
-
-                # Create an alias token set
-                alias_token_set = set()
-                aliases = self._alias_db[pre_pruned_cluster_id]
-                for alias in aliases:
-                    if _bad_alias(self._nlp.tokenizer(alias)):
-                        continue
-                    alias_tokens = tuple(x.text for x in self._nlp.tokenizer(alias))
-                    alias_token_set.update(alias_tokens)
-                    alias_token_set.update(capitalize(alias_tokens))
-                logger.debug('Alias token set: %s', alias_token_set)
-
                 logger.debug('Pruning cluster %i', i)
                 logger.debug('Initial Spans: %s', cluster)
-                cluster = self._prune_cluster(doc, cluster, alias_token_set)
+                cluster = self._prune_cluster(doc, cluster, alias_lookup)
                 logger.debug('Surviving spans: %s', cluster)
 
             # Extract set of unique entity ids of mentions in the cluster
@@ -301,7 +281,7 @@ class Annotator:
         wiki_ids.add(root_id)  # STUPID HACK: Prevents unmatching article subject
 
         # Add nel data
-        self._add_nel(doc, json_data['nel'], wiki_ids)
+        # self._add_nel(doc, json_data['nel'], wiki_ids)
 
         # Propagate links through coref clusters
         self._propagate_ids(doc, json_data['clusters'], wiki_ids)
@@ -340,14 +320,12 @@ class Annotator:
         for prop, value in self._relation_db[id]:
             if value['type'] == 'wikibase-entityid':
                 child_id = value['value']['id']
-                try:
-                    child_aliases = self._alias_db[child_id]
-                except:
-                    continue
+                child_aliases = [] # No longer match non-literals
             else:
                 child_id, child_aliases = process_literal(value)
-                if child_id is None:
-                    continue
+
+            if child_id is None:
+                continue
 
             if prop == 'P395':
                 logger.debug('Handling Commons relation')
@@ -365,9 +343,7 @@ class Annotator:
             self._parents[child_id].add((prop, id))
             for child_alias in child_aliases:
                 child_alias_tokens = [x.text for x in self._nlp.tokenizer(child_alias)]
-                logger.debug('Child alias tokens %s', child_alias_tokens)
                 if _bad_alias(self._nlp.tokenizer(child_alias)):
-                    logger.debug('Rejected')
                     continue
                 if child_alias_tokens not in self._alias_lookup:
                     self._alias_lookup.add(child_alias_tokens, child_id)
@@ -522,9 +498,7 @@ class Annotator:
                 # a literal).
                 parent_locs = [(loc - self._last_seen[parent_id]) for _, parent_id in parents]
                 logger.debug('With locs %s', parent_locs)
-                parents = [(x, y) for x, y in zip(parents, parent_locs) if y < self._distance_cutoff]
-                parents.sort(key=lambda x: x[1])
-                parents = [x for x, y in parents][:10]
+                parents = [x for x, y in zip(parents, parent_locs) if y < self._distance_cutoff]
                 logger.debug('Has surviving parents "%s"', parents)
                 if parents:
                     _relation, _parent_id = zip(*parents)
@@ -532,7 +506,7 @@ class Annotator:
                     parent_id.extend(list(_parent_id))
             if len(relation) == 0:
                 logger.debug('No surviving story')
-                if RE_ENTITY.match(id) and any(token._.source is not None for token, _ in match_stack):
+                if RE_ENTITY.match(id):
                     relation = ['@@NEW@@']
                     parent_id = [id]
                 else:

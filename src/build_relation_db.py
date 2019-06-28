@@ -45,11 +45,11 @@ def load_allowed_properties(fname):
 def main(_):
     allowed_properties = load_allowed_properties(FLAGS.properties)
     allowed_entities = load_allowed_entities(FLAGS.entities)
-    logger.info('Opening data file at: "%s"', FLAGS.db)
 
     if FLAGS.in_memory:
         db = defaultdict(list)
     else:
+        logger.info('Opening data file at: "%s"', FLAGS.db)
         db = SqliteDict(FLAGS.db, autocommit=True, journal_mode='OFF')
 
     if FLAGS.reverse and not FLAGS.in_memory:
@@ -92,11 +92,11 @@ def main(_):
 
                 # If relation is between entities, check that tail entity is
                 # allowed
-                if allowed_entities is not None:
-                    if mainsnak['datatype'] == 'wikibase-item':
-                        tail_id = mainsnak['datavalue']['value']['id']
-                        if tail_id not in allowed_entities:
-                            continue
+                # if allowed_entities is not None:
+                #     if mainsnak['datatype'] == 'wikibase-item':
+                #         tail_id = mainsnak['datavalue']['value']['id']
+                #         if tail_id not in allowed_entities:
+                #             continue
 
                 properties.append((property, value))
 
@@ -125,11 +125,11 @@ def main(_):
                                     continue
                             # If relation is between entities, check that tail
                             # entity is allowed
-                            if allowed_entities is not None:
-                                if qual_snak['datatype'] == 'wikibase-item':
-                                    tail_id = qual_snak['datavalue']['value']['id']
-                                    if tail_id not in allowed_entities:
-                                        continue
+                            # if allowed_entities is not None:
+                            #     if qual_snak['datatype'] == 'wikibase-item':
+                            #         tail_id = qual_snak['datavalue']['value']['id']
+                            #         if tail_id not in allowed_entities:
+                            #             continue
 
                             properties.append((qual_prop, qual_value))
 
@@ -178,7 +178,7 @@ if __name__ == '__main__':
         LEVEL = logging.DEBUG
     else:
         LEVEL = logging.INFO
-    logging.basicConfig(format=LOG_FORMAT, level=LEVEL)
+    logging.basicConfig(level=LEVEL)
 
     main(_)
 

@@ -21,7 +21,6 @@ YEAR_FORMATS = [
 
 MONTH_FORMATS = [
     Format('%B %Y', True, True),
-    Format('%B', False, False),
     Format('%b %Y', True, True),
     *YEAR_FORMATS
 ]
@@ -144,16 +143,18 @@ def render_quantity(value):
 def process_literal(value):
     literal = aliases = None
     if value['type'] == 'time':
-        literal = value['value']['time']
+        literal = 'T::%i::%s' % (value['value']['precision'],
+                                 value['value']['time'])
         aliases = render_time(value['value'])
     elif value['type'] == 'quantity':
-        literal = value['value']['amount']
+        literal = 'V::%0.4f::%s' % (float(value['value']['amount']),
+                                 value['value']['unit'])
         aliases = render_quantity(value['value'])
-    elif value['type'] == 'string':
-        literal = value['value']
-        aliases =  [value['value']]
-    elif value['type'] == 'monolingualtext':
-        literal = value['value']['text']
-        aliases = [value['value']['text']]
+    # elif value['type'] == 'string':
+    #     literal = value['value']
+    #     aliases =  [value['value']]
+    # elif value['type'] == 'monolingualtext':
+    #     literal = value['value']['text']
+    #     aliases = [value['value']['text']]
     return literal, aliases
 

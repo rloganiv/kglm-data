@@ -6,6 +6,7 @@ from typing import Any, Dict
 import argparse
 import json
 import logging
+import pickle
 import re
 
 from bs4 import BeautifulSoup, Comment
@@ -62,7 +63,7 @@ def clean_soup(root: BeautifulSoup) -> None:
     for equation in root.select('span.mwe-math-element'):
         equation.replace_with('__LATEX_FORMULA__')
     # We can clear formatting by using replace_with_children
-    format_tags = ['b', 'i', 'span', 'dl', 'dt']
+    format_tags = ['i', 'span', 'dl', 'dt']
     for tag in format_tags:
         for branch in root(tag):
             branch.replaceWithChildren()
@@ -75,6 +76,10 @@ def process(title: str,
     """Processes HTML tree into an annotated text object."""
     ids = []
     text = []
+    try:
+        title_id = wiki_db[format_wikilink(title)]
+    except KeyError:
+        logger.warning('No wiki entity associated with: %s', title)
 
     # First we build up a list of (text, id) pairs
     def _recursion(node):
@@ -95,6 +100,10 @@ def process(title: str,
         # TODO: Figure out what we want to do with section titles
         elif RE_HEADER.search(str(node.name)):
             pass
+        elif node.name == 'b' and len(text) < 50:
+            logger.debug('Associating %s w/ title', node.text)
+            ids.append(title_id)
+            text.append(node.text)
         # Otherwise, continue to recurse
         else:
             if hasattr(node, 'children'):
@@ -136,13 +145,17 @@ def process(title: str,
 
 
 def main(_):
-    wiki_db = SqliteDict(FLAGS.wiki_db, flag='r')
+    with open(FLAGS.wiki_db, 'rb') as f:
+        wiki_db = pickle.load(f)
     nlp = spacy.load('en_core_web_sm', disable=['ner'])
     for instance in generate_instances(FLAGS.input):
         soup = BeautifulSoup(instance['html'])
         root = soup.div
         clean_soup(root)
-        processed = process(instance['title'], root, wiki_db, nlp)
+        try:
+            processed = process(instance['title'], root, wiki_db, nlp)
+        except NameError:
+            continue
         print(json.dumps(processed))
 
 
@@ -150,7 +163,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('input', type=str)
     parser.add_argument('--wiki_db', type=str,
-                        default='data/wiki.case-sensitive.db')
+                        default='./data/wiki.pkl')
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--n_threads', type=int, default=32)
     parser.add_argument('--j', type=int, default=32)

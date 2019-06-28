@@ -35,15 +35,16 @@ def main(_):
 
                 parent_ids = annotation['parent_id']
                 relations = annotation['relation']
-                parent_ids, relations = *sorted(
+                sorted_pairs = sorted(
                     list(zip(parent_ids, relations)),
-                    key = lambda x: x[0]
+                    key = lambda x: x[0] + x[1]
                 )
+                parent_ids, relations = zip(*sorted_pairs)
 
                 parent_strings = []
                 relation_strings = []
 
-                for parent_id, relation in zip(parent_ids, relations):
+                for parent_id, relation in sorted_pairs:
 
                     # Unpack relation string
                     if relation is None:

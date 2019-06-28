@@ -27,11 +27,15 @@ class Stats():
         self._n_nel = 0
         self._n_coref = 0
         self._n_kg = 0
+        self._max_ent = 0
+        self._max_len = 0
 
     def update(self, data):
         self._n += 1
         self._n_tokens += sum(len(x) for x in data['tokens'])
         annotations = data['annotations']
+        seen = set()
+        ml = 0
         for annotation in annotations:
             self._n_entities += 1
             self._total_annotations += 1
@@ -39,13 +43,16 @@ class Stats():
             if relation == ['@@NEW@@']:
                 self._new_entities += 1
                 self._p_source_given_new[annotation['source']] += 1
-            elif relation == ['@@REFLEXIVE@@']:
+            if '@@REFLEXIVE@@' in relation:
                 self._reflexive_entities += 1
-            else:
+            if any(r not in ['@@NEW@@', '@@REFLEXIVE@@'] for r in relation):
                 self._related_entities += 1
             #    self._prop_counts[relation] += 1
             span = annotation['span']
             span_length = span[1] - span[0]
+
+            seen.add(annotation['id'])
+            ml = max(ml, span_length)
             self._n_entity_tokens += span_length
             source = annotation['source']
             if source == 'WIKI':
@@ -56,26 +63,34 @@ class Stats():
                 self._n_coref += 1
             elif source == 'KG':
                 self._n_kg += 1
+        self._max_ent = max(self._max_ent, len(seen))
+        self._max_len = max(self._max_len, ml)
+
 
     def log(self):
         print('Tokens = %i' % self._n_tokens)
         print('Total annotations = %i' % self._total_annotations)
         print('Avg. annotations / page = %0.4f' %
               (self._total_annotations / self._n))
-        print('P(entity token) = %0.4f' %
-              (self._n_tokens / self._n_entity_tokens))
+        # print('P(entity token) = %0.4f' %
+        #       (self._n_tokens / self._n_entity_tokens))
         print('P(@@REFLEXIVE@@) = %0.4f' %
               (self._reflexive_entities / self._total_annotations))
-        print('P(new entity comes from KG) = %0.4f' %
-              (self._related_entities / (self._new_entities + self._related_entities)))
+        # print('P(new entity comes from KG) = %0.4f' %
+        #       (self._related_entities / (self._new_entities + self._related_entities)))
         print('P(WIKI) = %0.4f' % (self._n_wiki / self._n_entities))
         print('P(NEL) = %0.4f' % (self._n_nel / self._n_entities))
         print('P(COREF) = %0.4f' % (self._n_coref / self._n_entities))
         print('P(KG) = %0.4f' % (self._n_kg / self._n_entities))
-
         total = sum(self._p_source_given_new.values())
         for source, count in self._p_source_given_new.items():
             print('P(%s|@@NEW@@) = %0.4f' % (source, count / total))
+        print('P(NEW) = %0.4f' % (self._new_entities / self._n_entities))
+        print('P(RELATED) = %0.4f' % (self._related_entities / self._n_entities))
+        print('max ent = %i' % self._max_ent)
+        print('max mention length = %i' % self._max_len)
+
+
 
 
 def main(_):

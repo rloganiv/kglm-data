@@ -2,10 +2,11 @@
 Utilities.
 """
 from typing import Any, Dict, Generator, List, Set
-
 import gzip
 import json
 import logging
+
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,7 @@ def format_wikilink(wikilink: str) -> str:
 def generate_from_wikidump(fname: str) -> Generator[Dict[str, Any], None, None]:
     """Generates data from a wikidata dump"""
     with gzip.open(fname) as f:
-        for i, line in enumerate(f):
-            if not i % 1000:
-                logger.info('On line %i', i)
+        for line in tqdm(f):
             if line[0] == '[':
                 line = line[1:]
             elif line[-1] == ']':

@@ -68,7 +68,7 @@ def _merge_clusters(all_clusters):
 
 class CoreNLPCorefPredictor:
     def __init__(self,
-                 address: str = 'http://localhost:9000/',
+                 address: str = 'http://localhost:9001/',
                  n_threads: int = 16):
         self._address = address
         self._params = {
