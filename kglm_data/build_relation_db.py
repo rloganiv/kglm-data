@@ -5,11 +5,9 @@ entities
 import argparse
 from collections import defaultdict
 import csv
-import json
 import logging
 import pickle
 import re
-import sys
 
 from sqlitedict import SqliteDict
 
@@ -57,11 +55,11 @@ def main(_):
                            '(takes too long).')
 
     for data in generate_from_wikidump(FLAGS.input):
-        id = data['id']
+        wiki_id = data['id']
 
         # Check if data pertains to a given entity
         if allowed_entities is not None:
-            if id not in allowed_entities:
+            if wiki_id not in allowed_entities:
                 continue
 
         claims = data['claims']
@@ -87,7 +85,8 @@ def main(_):
                 # Seperate processing for monolingual text
                 if mainsnak['datatype'] == 'monolingualtext':
                     # Only accept english strings...
-                    if value['value']['language'] != 'en':
+                    if value['value']['language'] != FLAGS.language:
+                        logger.debug(f"Skipping {mainsnak} because it is not the correct language ({FLAGS.language})")
                         continue
 
                 # If relation is between entities, check that tail entity is
@@ -121,7 +120,9 @@ def main(_):
                             # Seperate processing for monolingual text
                             if qual_snak['datatype'] == 'monolingualtext':
                                 # Only accept english strings...
-                                if qual_value['value']['language'] != 'en':
+                                if qual_value['value']['language'] != FLAGS.language:
+                                    logger.debug(f"Skipping {qual_value} because it is "
+                                                 f"not the correct language ({FLAGS.language})")
                                     continue
                             # If relation is between entities, check that tail
                             # entity is allowed
@@ -133,13 +134,13 @@ def main(_):
 
                             properties.append((qual_prop, qual_value))
 
-        logger.debug('Entity: %s', id)
+        logger.debug('Entity: %s', wiki_id)
         logger.debug('Properties: %s', properties)
 
         if FLAGS.in_memory:
-            db[id].extend(properties)
+            db[wiki_id].extend(properties)
         else:
-            db[id] = properties
+            db[wiki_id] = properties
 
         # Optional: Add reverse links
         if FLAGS.reverse:
@@ -152,7 +153,7 @@ def main(_):
                 bw_value = {
                     'type': 'wikibase-entityid',
                     'value': {
-                        'id': id
+                        'id': wiki_id
                     }
                 }
                 db[tail_id].append((bw_prop, bw_value))
@@ -172,6 +173,7 @@ if __name__ == '__main__':
     parser.add_argument('--reverse', action='store_true')
     parser.add_argument('--in_memory', action='store_true')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--language', type=str, default="en")
     FLAGS, _ = parser.parse_known_args()
 
     if FLAGS.debug:
@@ -181,4 +183,3 @@ if __name__ == '__main__':
     logging.basicConfig(level=LEVEL)
 
     main(_)
-
