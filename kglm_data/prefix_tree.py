@@ -4,9 +4,9 @@ Implementation of a prefix-tree data structure.
 Used to match token sequences in linear time.
 """
 import logging
-from typing import Tuple, Iterable
+from typing import Iterable
 
-logger =  logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class TreeNode(dict):
@@ -27,10 +27,10 @@ class PrefixTree(object):
         self._active = self._root
         self._fixed = fixed
 
-    def __contains__(self, iter: Iterable[str]):
+    def __contains__(self, it: Iterable[str]):
         """Sees whether a sequence of elements is a path in the tree."""
         active = self._root
-        for elt in iter:
+        for elt in it:
             try:
                 active = active[elt]
             except KeyError:
@@ -62,30 +62,30 @@ class PrefixTree(object):
         return self._active.id
 
     def add(self,
-            iter: Iterable[str],
-            id: str) -> None:
+            it: Iterable[str],
+            str_id: str) -> None:
         """Adds a sequence to the tree.
 
         Args:
-            iter : ``Iterable[str]``
+            it : ``Iterable[str]``
                 A sequence of strings to add as a path in the tree.
-            id : ``str``
+            str_id : ``str``
                 The identifier for the sequence.
         """
-        assert id is not None, 'Cannot add a sequence without an `id`'
+        assert str_id is not None, 'Cannot add a sequence without an `id`'
         active = self._root
-        for elt in iter:
+        for elt in it:
             if elt not in active:
                 active[elt] = TreeNode()
             active = active[elt]
         if active.id is None:
-            active.id = id
-        elif active.id != id:
+            active.id = str_id
+        elif active.id != str_id:
             if self._fixed:
                 logger.warning('Collision existing id "%s" with new id "%s"',
-                               active.id, id)
+                               active.id, str_id)
             else:
                 logger.warning('Overwriting existing id "%s" with new id "%s"',
-                               active.id, id)
-                active.id = id
+                               active.id, str_id)
+                active.id = str_id
 
