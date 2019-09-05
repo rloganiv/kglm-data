@@ -10,16 +10,11 @@ import logging
 import pickle
 import random
 
+from kglm_data.util import generate_instances
+
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 BORING_RELATIONS = ['@@REFLEXIVE@@', '@@NEW@@']
-
-
-def generate_instances(fname: str) -> Dict[str, Any]:
-    """Generates instances from a JSON-lines file"""
-    with open(fname, 'r') as f:
-        for line in f:
-            yield json.loads(line)
 
 
 def main(_):
