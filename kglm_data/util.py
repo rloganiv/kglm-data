@@ -10,6 +10,8 @@ from xml.etree import ElementTree
 import re
 
 from tqdm import tqdm
+from spacy.tokens.doc import Doc
+from spacy.parts_of_speech import NUM, SPACE
 
 logger = logging.getLogger(__name__)
 
@@ -134,3 +136,27 @@ def extract_redirect(elem: ElementTree.Element) -> Optional[Tuple[str, str]]:
     _to = redirect.attrib['title'].replace(' ', '_').capitalize()
     logger.debug('Redirect from "%s" to "%s"', _from, _to)
     return _from, _to
+
+def merge_numbers_to_single_token(doc: Doc) -> None:
+    with doc.retokenize() as retokenizer:
+        is_number = False
+        start = 0
+        end = 0
+        for t in doc:
+            if t.pos == NUM:
+                if is_number:
+                    end = t.i
+                else:
+                    start = t.i
+                    end = t.i
+                    is_number = True
+            elif t.pos == SPACE and is_number:
+                end = t.i
+            else:
+                if is_number:
+                    if end > start:
+                        retokenizer.merge(doc[start:end + 1])
+                    is_number = False
+        if is_number and end > start:
+            retokenizer.merge(doc[start:end + 1])
+    return doc
