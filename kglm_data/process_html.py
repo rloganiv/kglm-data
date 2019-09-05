@@ -10,26 +10,23 @@ import pickle
 import re
 
 from bs4 import BeautifulSoup, Comment
-import spacy
 from spacy.language import Language
+from spacy.util import get_lang_class
 from spacy.tokens import Doc
 from sqlitedict import SqliteDict
 
-from kglm_data.util import format_wikilink
+from kglm_data.util import format_wikilink, generate_instances
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
 RE_WHITESPACE = re.compile(r'[\n\r\s]+')
 RE_HEADER = re.compile(r'^h[1-6]')
+START_TOKEN = "@@START@@"
+END_TOKEN = "@@END@@"
 
-
-def generate_instances(input: str) -> Dict[str, Any]:
-    """Generates instances from an input JSON-lines file"""
-    with open(FLAGS.input, 'r') as f:
-        for line in f:
-            data = json.loads(line)
-            yield data
+nodes_to_skip = {"sup"}
+BREAKING_HEADERS = ("Se även", "Referenser", "Noter", "Tryckta källor", "Vidare läsning", "Externa länkar")
 
 
 def clean_soup(root: BeautifulSoup) -> None:
@@ -55,8 +52,12 @@ def clean_soup(root: BeautifulSoup) -> None:
     for invisible in root.select('.noprint,.mw-empty-elt'):
         invisible.decompose()
     # Comments need to be handled seperately
-    for comment in root(string = lambda text:isinstance(text, Comment)):
+    for comment in root(string=lambda text: isinstance(text, Comment)):
         comment.extract()
+    for quote in root.find_all("table", {"class": "cquote"}):
+        p = quote("td")[1].extract()
+        p.name = "p"
+        quote.replace_with(p)
     # Math is typically rendered two ways: inline (as a <span>), and as a
     # seperate line (as a <dl><dd><span>). Unfortunately, math can also just be
     # italicized text
@@ -99,16 +100,24 @@ def process(title: str,
             text.append(node.text)
         # TODO: Figure out what we want to do with section titles
         elif RE_HEADER.search(str(node.name)):
-            pass
+            if node.text in BREAKING_HEADERS:
+                logger.info(f"Header {node.text} in blacklist, returning")
+                return 1
         elif node.name == 'b' and len(text) < 50:
             logger.debug('Associating %s w/ title', node.text)
             ids.append(title_id)
             text.append(node.text)
+        elif node.name in nodes_to_skip:
+            logger.debug(f"Skipping blacklisted node {node.name}")
+            return
         # Otherwise, continue to recurse
         else:
             if hasattr(node, 'children'):
                 for child in node.children:
-                    _recursion(child)
+                    res = _recursion(child)
+                    if res == 1:
+                        logger.debug(f"Received exit signal on child {child}")
+                        break
             # If we've hit a leaf (that isn't a link) then append the text
             else:
                 ids.append(None)
@@ -121,11 +130,11 @@ def process(title: str,
     spaces = []
     entities = []
     for id, doc in zip(ids, nlp.tokenizer.pipe(text, FLAGS.batch_size, FLAGS.n_threads)):
-        start = len(words)
+        start = len(words) + 1
         tokens = [token for token in doc if not RE_WHITESPACE.search(token.text)]
         words.extend([token.text for token in tokens])
-        spaces.extend([token.whitespace_  != '' for token in tokens])
-        end = len(words)
+        spaces.extend([token.whitespace_ != '' for token in tokens])
+        end = len(words) + 1
         if id is not None:
             entities.append([id, start, end])
     assert len(words) == len(spaces), 'mismatching lengths: `words` and `spaces`'
@@ -133,7 +142,18 @@ def process(title: str,
     doc = Doc(nlp.vocab, words=words, spaces=spaces)
     for _, proc in nlp.pipeline:
         doc = proc(doc)
-    tokens = [[token.text for token in sentence] for sentence in doc.sents]
+
+    tokens = []
+    for sentence in doc.sents:
+        tokens.extend([token.text for token in sentence] + [END_TOKEN])
+
+        # Increment span indexing for the entities occuring _after_ this sentence
+        current_end_index = len(tokens)
+        for e in filter(lambda x: x[1] >= current_end_index, entities):
+            e[1] += 1
+            e[2] += 1
+
+    tokens.insert(0, START_TOKEN)
 
     out = {
         'title': title,
@@ -147,9 +167,11 @@ def process(title: str,
 def main(_):
     with open(FLAGS.wiki_db, 'rb') as f:
         wiki_db = pickle.load(f)
-    nlp = spacy.load('en_core_web_sm', disable=['ner'])
+
+    nlp = get_lang_class(FLAGS.language)(disable=['ner'])
+    nlp.add_pipe(nlp.create_pipe('sentencizer'))
     for instance in generate_instances(FLAGS.input):
-        soup = BeautifulSoup(instance['html'])
+        soup = BeautifulSoup(instance['html'], features="lxml")
         root = soup.div
         clean_soup(root)
         try:
@@ -168,6 +190,8 @@ if __name__ == '__main__':
     parser.add_argument('--n_threads', type=int, default=32)
     parser.add_argument('--j', type=int, default=32)
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--language', type=str, default='en')
+
     FLAGS, _ = parser.parse_known_args()
 
     if FLAGS.debug:
