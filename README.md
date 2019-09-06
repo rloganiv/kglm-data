@@ -51,7 +51,7 @@ To build Relation DB:
 ```bash
 python kglm_data/build_relation_db.py latest-all.json.gz --db data/relation.pkl -e data/entities.txt --reverse --in_memory --language sv
 ```
-The `--reverse` argument .
+Use `--reverse` argument to add reverse links.
 
 To build Alias DB:
 ```bash
