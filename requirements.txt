@@ -5,3 +5,7 @@ simplejson==3.16.0
 spacy==2.0.12
 sqlitedict==1.5.0
 tqdm==4.25.0
+gender_guesser==0.4.0
+beautifulsoup4==4.6.3
+gender-guesser==0.4.0
+lxml==4.3.0

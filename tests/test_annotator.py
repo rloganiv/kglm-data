@@ -7,7 +7,7 @@ import sys
 
 from spacy.tokens import Doc, Token
 
-from kglm_data.annotate import Annotator
+from kglm_data.annotator import Annotator
 from kglm_data.util import flatten_tokens
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,10 @@ RELATION_DB = {
     'Q2': []
 }
 
+CUTOFF = 500
+LANGUAGE = 'en'
+SPACY_PATH = False
+
 
 class TestStandardAnnotator(unittest.TestCase):
 
@@ -47,11 +51,25 @@ class TestStandardAnnotator(unittest.TestCase):
         self.alias_db = ALIAS_DB
         self.relation_db = RELATION_DB
         self.wiki_db = WIKI_DB
+        self.distance_cutoff = CUTOFF
+        self.match_aliases = True
+        self.unmatch = False
+        self.prune_clusters = True
+        self.language = LANGUAGE
+        self.merge_entities = False
+        self.spacy_model_path = SPACY_PATH
         self.annotator = Annotator(alias_db=self.alias_db,
-                              relation_db=self.relation_db,
-                              wiki_db=self.wiki_db)
+                                   relation_db=self.relation_db,
+                                   wiki_db=self.wiki_db,
+                                   distance_cutoff=self.distance_cutoff,
+                                   match_aliases=self.match_aliases,
+                                   unmatch=self.unmatch,
+                                   prune_clusters=self.prune_clusters,
+                                   language=self.language,
+                                   merge_entities=self.merge_entities,
+                                   spacy_model_path=self.spacy_model_path)
 
-        with open('tests/fixtures/test.jsonl', 'r') as f:
+        with open('/tests/fixtures/test.jsonl', 'r') as f:
             test_line = f.readline()
         self.json_data = json.loads(test_line.strip())
         tokens = flatten_tokens(self.json_data['tokens'])

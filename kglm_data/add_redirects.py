@@ -6,45 +6,15 @@ import argparse
 import bz2
 import logging
 import pickle
-import sys
 from xml.etree import ElementTree
-from xml.sax.saxutils import unescape
 
 from sqlitedict import SqliteDict
 
+from kglm_data.util import extract_redirect
+
 
 logger = logging.getLogger(__name__)
-
-
 xmlns = '{http://www.mediawiki.org/xml/export-0.10/}'
-
-
-def extract_redirect(elem: ElementTree.Element) -> str:
-    """Extracts redirects from a <page> element in the Wikipedia dump.
-
-    Args:
-        elem : ``xml.etree.ElementTree.Element``
-            The <page> element to process.
-
-    Returns:
-        A tuple ``(from, to)`` containing the titles of the pages being
-        redirected from and to if the page is a redirect, otherwise ``None``.
-    """
-    # Get page title
-    title = elem.find(f'{xmlns}title')
-    if title is None:
-        logger.debug('<page> has no <title> element')
-        return
-    _from = title.text.replace(' ', '_').capitalize()
-    # Check if page is a redirect
-    redirect = elem.find(f'{xmlns}redirect')
-    if redirect is None:
-        logger.debug('<page> has no <redirect> element')
-        return
-    _to = redirect.attrib['title'].replace(' ', '_').capitalize()
-    logger.debug('Redirect from "%s" to "%s"', _from, _to)
-    return _from, _to
-
 
 def main(_):
     logger.info('Opening database file at: "%s"', FLAGS.wiki_db)

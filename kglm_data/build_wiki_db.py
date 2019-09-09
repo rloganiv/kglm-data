@@ -24,21 +24,21 @@ def main(_):
 
     for data in generate_from_wikidump(FLAGS.input):
 
-        id = data['id']
+        wiki_id = data['id']
 
         try:
-            wikilink = data['sitelinks']['enwiki']['title']
+            wikilink = data['sitelinks'][f"{FLAGS.language}wiki"]['title']
         except KeyError:
-            logger.debug('No enwiki title found for entity "%s"', id)
+            logger.debug(f'No {FLAGS.language}wiki title found for entity "%s"', wiki_id)
             continue
         else:
             wikilink = format_wikilink(wikilink)
 
-        logger.debug('id: "%s" - enwiki title: "%s"', id, wikilink)
+        logger.debug(f'id: "{wiki_id}" - {FLAGS.language}wiki title: "{wikilink}"')
         if wikilink in db:
-            logger.warning('Collision for enwiki title: "%s"', wikilink)
+            logger.warning(f'Collision for {FLAGS.language}wiki title: "{wikilink}"')
 
-        db[wikilink] = id
+        db[wikilink] = wiki_id
 
     if FLAGS.in_memory:
         logger.info('Dumping')
@@ -56,6 +56,7 @@ if __name__ == '__main__':
     parser.add_argument('--db', type=str, default='wiki.db')
     parser.add_argument('--in_memory', action='store_true')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--language', type=str, default="en")
     FLAGS, _ = parser.parse_known_args()
 
     if FLAGS.debug:

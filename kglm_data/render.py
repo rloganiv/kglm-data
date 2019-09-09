@@ -40,15 +40,15 @@ DAY_FORMATS = [
 
 RE_LEADING_ZEROS = re.compile(r'((?<=\s)0+|^0+)')
 RE_ISO_8601 = re.compile(r'(?P<year>[+-][0-9]+)-(?P<month>[0-9]{2})-(?P<day>[0-9]{2})(?=T)')
-
+RE_WIKIDATA_ENTITY = re.compile(r'http://www.wikidata.org/entity/Q[0-9]+')
 
 class Date(object):
 
-    LONG_MONTHS = [None, 'January', 'February', 'March', 'April', 'May', 'June', 'July',
-                   'August', 'September', 'October', 'November', 'December']
+    LONG_MONTHS = [None, 'januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli',
+                   'augusti', 'september', 'oktober', 'november', 'december']
 
-    SHORT_MONTHS = [None, 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug',
-                    'Sep', 'Oct', 'Nov', 'Dec']
+    SHORT_MONTHS = [None, 'jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug',
+                    'sep', 'oct', 'nov', 'dec']
 
     def __init__(self, year, month=None, day=None):
         self._year = year
@@ -110,13 +110,13 @@ def render_time(value):
     date = parse_iso8601(posix_string)
     if precision == 11:  # Day level precision
         return custom_strftime(DAY_FORMATS, date)
-    if precision == 10: # Month level prevision
+    if precision == 10:  # Month level prevision
         return custom_strftime(MONTH_FORMATS, date)
-    elif precision < 10: # Year level precision or less
+    elif precision < 10:  # Year level precision or less
         return custom_strftime(YEAR_FORMATS, date)
 
 
-def render_quantity(value):
+def render_quantity(value, alias_db):
     amount = float(value['amount'])
     unit = value['unit']
     if unit == '1':
@@ -126,21 +126,24 @@ def render_quantity(value):
         try:
             quantity = Q_(amount, unit)
         except UndefinedUnitError:
-            return [str(amount)]
+            units = []
+            if RE_WIKIDATA_ENTITY.match(unit):
+                units = alias_db.get(unit.split("/")[-1], [])
+            return [str(amount)] + [str(amount) + " " + u for u in units]
         f_string = '{0:{1:}f} {2:{3:}}'
         precisions = ['', '1.0', '0.1', '0.2']
         unit_formats = ['', '~']
-        out = []
+        out = [quantity.format_babel(locale='sv_SE')]
         for precision in precisions:
             for unit_format in unit_formats:
                 out.append(f_string.format(quantity.magnitude,
                                            precision,
-                                           quantity.units,
+                                           quantity.units,  # TODO: Translate units
                                            unit_format))
         return out
 
 
-def process_literal(value):
+def process_literal(value, alias_db):
     literal = aliases = None
     if value['type'] == 'time':
         literal = 'T::%i::%s' % (value['value']['precision'],
@@ -148,8 +151,8 @@ def process_literal(value):
         aliases = render_time(value['value'])
     elif value['type'] == 'quantity':
         literal = 'V::%0.4f::%s' % (float(value['value']['amount']),
-                                 value['value']['unit'])
-        aliases = render_quantity(value['value'])
+                                    value['value']['unit'])
+        aliases = render_quantity(value['value'], alias_db)
     # elif value['type'] == 'string':
     #     literal = value['value']
     #     aliases =  [value['value']]
