@@ -39,7 +39,7 @@ python kglm_data/process_html.py data/sv_dump --wiki_db data/wiki.pkl --language
 To add co-reference and nel:
 ```bash
 add_coref_clusters data/articles_processed_entities.jsonl data/articles_coref.jsonl --spacy_model_dir /spacy_dir -j 0
-python add_entity_links data/sv/articles_coref.jsonl data/articles_nel.jsonl --spacy_model_dir  /spacy_dir
+add_entity_links data/sv/articles_coref.jsonl data/articles_nel.jsonl --spacy_model_dir  /spacy_dir
 ```
 Here `spacy_dir` is an argument which allows for loading spacy models from disk. If path is a string (e.g. “en”), spacy will download the english model.
 
