@@ -5,6 +5,7 @@ from collections import defaultdict, deque
 from time import time
 from importlib import import_module
 
+import spacy
 from sqlitedict import SqliteDict
 from spacy.tokens import Doc, Token
 from spacy.util import get_lang_class, load_model_from_path
@@ -91,7 +92,7 @@ class Annotator:
     @staticmethod
     def _create_nlp_pipeline(language: str, model_path: str = None):
         if not model_path:
-            return get_lang_class(language)()
+            return spacy.load('en', disable=['parser', 'ner'])
         else:
             return load_model_from_path(model_path, disable=['parser'])
 
@@ -141,7 +142,13 @@ class Annotator:
                 self.logger.debug('Rejected - Already Linked')
                 continue
 
-            wiki_id = candidate['label']
+            key = format_wikilink(candidate['label'])
+            logging.debug('Key - %s', key)
+            try:
+                wiki_id = self._wiki_db[key]
+            except KeyError:
+                logging.debug('Rejected - Key not found')
+                continue
             matches = wiki_id in wiki_ids if self._unmatch else True
             if matches:
                 for token in doc[start:end]:
@@ -172,7 +179,8 @@ class Annotator:
 
             # Check for pronoun
             if start == end:
-                if mention[0].tag_ in self.PRONOUNS:
+                tag = mention[0].tag_
+                if set(tag.split("|")).intersection(self.PRONOUNS):
                     new_cluster.append([start, end])
                     self.logger.debug('Found pronoun: %s', mention)
                     continue
