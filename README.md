@@ -92,6 +92,11 @@ Annotation Pipeline
         --relation_db relation.db \
         --wiki_db wiki.db
     ```
+Each annotation will be a span which also includes information about where the link comes from. The possible options are:
+- WIKI: Link comes from Wikipedia article HTML.
+- NEL: Link comes from named entity linker.
+- COREF: Link inherited from an entity in coreference cluster.
+- KG: Link comes from an exact string match to an alias in the local knowledge graph (please see [our paper](https://arxiv.org/abs/1906.07241) for details).
 
 
 Tips for Improving Annotation Speed on Small Datasets
